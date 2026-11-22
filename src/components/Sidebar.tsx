@@ -1,4 +1,4 @@
-import { Flame, Plus, Settings } from "lucide-react";
+import { CircleArrowUp, Flame, Plus, Settings } from "lucide-react";
 
 import { t } from "../i18n";
 import { avatarColors, initial, loaderName, statusText, statusTone } from "../lib/format";
@@ -12,6 +12,8 @@ export function Sidebar() {
   const navigate = useHearth((s) => s.navigate);
   const install = useHearth((s) => s.install);
   const openSettings = useHearth((s) => s.setAppSettingsOpen);
+  const update = useHearth((s) => s.update);
+  const openUpdate = useHearth((s) => s.setUpdateDialogOpen);
 
   const list = Object.values(servers).sort((a, b) => a.meta.createdAt.localeCompare(b.meta.createdAt));
   const selectedId = view.kind === "server" ? view.id : null;
@@ -64,6 +66,19 @@ export function Sidebar() {
       </nav>
 
       <div className="mt-auto flex flex-col gap-2">
+        {update && (
+          <button
+            type="button"
+            onClick={() => openUpdate(true)}
+            className="flex items-center gap-2.5 p-2.5 rounded-[10px] bg-ok-bg text-ok-text text-left hover:brightness-110 transition"
+          >
+            <CircleArrowUp size={20} className="shrink-0" aria-hidden="true" />
+            <span className="flex flex-col min-w-0">
+              <span className="text-[13px] font-semibold">{t.update.available(update.version)}</span>
+              <span className="text-xs underline">{t.update.button}</span>
+            </span>
+          </button>
+        )}
         <button
           type="button"
           onClick={() => navigate({ kind: "wizard" })}

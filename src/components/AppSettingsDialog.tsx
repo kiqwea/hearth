@@ -20,6 +20,9 @@ export function AppSettingsDialog() {
   const [serversDir, setServersDir] = useState("");
   const [java, setJava] = useState<InstalledJava[]>([]);
   const [saving, setSaving] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const checkUpdates = useHearth((s) => s.checkUpdates);
+  const setUpdateOpen = useHearth((s) => s.setUpdateDialogOpen);
 
   useEffect(() => {
     if (!open || !config) return;
@@ -99,7 +102,25 @@ export function AppSettingsDialog() {
       </div>
 
       <div className="pt-3 border-t border-line text-[13px] text-muted flex flex-col gap-1">
-        {system && <span>{t.appSettings.version(system.appVersion)}</span>}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {system && <span>{t.appSettings.version(system.appVersion)}</span>}
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={checking}
+            onClick={async () => {
+              setChecking(true);
+              await checkUpdates(true);
+              setChecking(false);
+              if (useHearth.getState().update) {
+                setOpen(false);
+                setUpdateOpen(true);
+              }
+            }}
+          >
+            {t.update.check}
+          </Button>
+        </div>
         <span>{t.appSettings.disclaimer}</span>
       </div>
     </Dialog>

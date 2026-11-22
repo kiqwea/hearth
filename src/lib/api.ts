@@ -60,7 +60,43 @@ export interface HearthApi {
   getProperties(id: string): Promise<PropertyEntry[]>;
   setProperties(id: string, entries: PropertyEntry[]): Promise<void>;
   openFolder(id: string): Promise<void>;
+  stopAll(): Promise<void>;
   onEvent(handler: (event: Event) => void): Promise<() => void>;
+  /** Есть ли новая версия Hearth. `null`, если установлена последняя. */
+  checkUpdate(): Promise<AvailableUpdate | null>;
+}
+
+export interface AvailableUpdate {
+  version: string;
+  currentVersion: string;
+  notes: string | null;
+  date: string | null;
+  /** Скачивает, проверяет подпись и ставит обновление; Hearth перезапустится сам. */
+  install(onProgress: (downloaded: number, total: number | null) => void): Promise<void>;
+}
+
+async function tauriCheckUpdate(): Promise<AvailableUpdate | null> {
+  const { check } = await import("@tauri-apps/plugin-updater");
+  const update = await check();
+  if (!update) return null;
+  return {
+    version: update.version,
+    currentVersion: update.currentVersion,
+    notes: update.body ?? null,
+    date: update.date ?? null,
+    async install(onProgress) {
+      let total: number | null = null;
+      let downloaded = 0;
+      await update.downloadAndInstall((e) => {
+        if (e.event === "Started") total = e.data.contentLength ?? null;
+        if (e.event === "Progress") downloaded += e.data.chunkLength;
+        onProgress(downloaded, total);
+      });
+      // На Windows установщик сам перезапускает Hearth; relaunch — на случай других ОС.
+      const { relaunch } = await import("@tauri-apps/plugin-process");
+      await relaunch();
+    },
+  };
 }
 
 const tauriApi: HearthApi = {
@@ -89,8 +125,10 @@ const tauriApi: HearthApi = {
   getProperties: (id) => invoke("get_properties", { id }),
   setProperties: (id, entries) => invoke("set_properties", { id, entries }),
   openFolder: (id) => invoke("open_server_folder", { id }),
+  stopAll: () => invoke("stop_all_servers"),
 
   onEvent: (handler) => listen<Event>("hearth://event", (e) => handler(e.payload)),
+  checkUpdate: tauriCheckUpdate,
 };
 
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;

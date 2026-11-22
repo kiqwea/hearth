@@ -32,6 +32,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         start_server,
         stop_server,
         kill_server,
+        stop_all_servers,
         restart_server,
         send_command,
         get_console,
@@ -123,6 +124,13 @@ async fn start_server(state: State<'_, AppState>, id: String) -> Result<()> {
 #[tauri::command]
 async fn stop_server(state: State<'_, AppState>, id: String) -> Result<()> {
     state.manager.stop(&id, STOP_TIMEOUT).await
+}
+
+/// Перед установкой обновления: корректно останавливает все серверы.
+#[tauri::command]
+async fn stop_all_servers(state: State<'_, AppState>) -> Result<()> {
+    state.manager.stop_all(STOP_TIMEOUT).await;
+    Ok(())
 }
 
 #[tauri::command]

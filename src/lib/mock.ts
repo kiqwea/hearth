@@ -213,6 +213,29 @@ export function createMockApi(): HearthApi {
       }
     },
     openFolder: async () => {},
+    stopAll: async () => {
+      for (const [id, s] of servers) {
+        if (s.status.state === "running" || s.status.state === "starting") {
+          setStatus(id, { state: "stopping" });
+          await wait(600);
+          setStatus(id, { state: "stopped" });
+        }
+      }
+    },
+    checkUpdate: async () => ({
+      version: "0.2.0",
+      currentVersion: "0.1.0",
+      notes: "- Доступ для друзей через интернет (playit.gg)\n- Вкладка «Игроки»: кик, бан, оп и белый список",
+      date: null,
+      install: async (onProgress) => {
+        const total = 3_300_000;
+        for (let d = 0; d <= total; d += 300_000) {
+          onProgress(d, total);
+          await wait(150);
+        }
+        window.location.reload();
+      },
+    }),
     onEvent: async (handler) => {
       handlers.add(handler);
       return () => handlers.delete(handler);

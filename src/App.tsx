@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { AppSettingsDialog } from "./components/AppSettingsDialog";
 import { Sidebar } from "./components/Sidebar";
 import { Toasts } from "./components/Toasts";
+import { UpdateDialog } from "./components/UpdateDialog";
 import { Spinner } from "./components/ui";
 import { inTauri } from "./lib/api";
 import { useHearth } from "./lib/store";
@@ -40,6 +41,7 @@ export default function App() {
         {view.kind === "server" && <ServerView key={view.id} id={view.id} tab={view.tab} />}
       </main>
       <AppSettingsDialog />
+      <UpdateDialog />
       <Toasts />
       {!inTauri && (
         <div className="fixed top-2 right-3 z-40 px-2.5 py-1 rounded-full bg-warn-bg text-warn text-xs font-semibold">

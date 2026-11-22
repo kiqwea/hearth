@@ -11,10 +11,13 @@ import type { NetworkInfo } from "../bindings/NetworkInfo";
 import type { ServerStatus } from "../bindings/ServerStatus";
 import type { ServerSummary } from "../bindings/ServerSummary";
 import type { SystemInfo } from "../bindings/SystemInfo";
-import { api, errorMessage } from "./api";
+import { t } from "../i18n";
+import { api, errorMessage, type AvailableUpdate } from "./api";
 
 /** Сколько строк консоли держим в интерфейсе на сервер (столько же хранит ядро). */
 const CONSOLE_LIMIT = 5000;
+/** Как часто проверять обновления Hearth, пока приложение открыто. */
+const UPDATE_CHECK_INTERVAL = 6 * 60 * 60 * 1000;
 
 export type ServerTab = "overview" | "console" | "settings";
 
@@ -42,6 +45,13 @@ interface HearthState {
   runningSince: Record<string, number>;
   toasts: Toast[];
   appSettingsOpen: boolean;
+  /** Новая версия Hearth, если вышла. */
+  update: AvailableUpdate | null;
+  updateDialogOpen: boolean;
+
+  /** Проверка обновлений. `manual` — по кнопке: тогда сообщаем и об ошибке, и о том, что обновлений нет. */
+  checkUpdates(manual?: boolean): Promise<void>;
+  setUpdateDialogOpen(open: boolean): void;
 
   init(): Promise<void>;
   refreshServers(): Promise<void>;
@@ -70,11 +80,31 @@ export const useHearth = create<HearthState>((set, get) => ({
   runningSince: {},
   toasts: [],
   appSettingsOpen: false,
+  update: null,
+  updateDialogOpen: false,
+
+  async checkUpdates(manual = false) {
+    try {
+      const update = await api.checkUpdate();
+      set({ update });
+      if (manual && !update) get().toast("success", t.update.upToDate);
+    } catch (e) {
+      // Без интернета или до первого релиза проверка просто не удаётся: молчим.
+      if (manual) get().toast("error", `${t.update.checkFailed}: ${errorMessage(e)}`);
+      else console.warn("Проверка обновлений не удалась", e);
+    }
+  },
+
+  setUpdateDialogOpen(open) {
+    set({ updateDialogOpen: open });
+  },
 
   async init() {
     if (initialized) return;
     initialized = true;
     await api.onEvent(handleEvent);
+    void get().checkUpdates();
+    setInterval(() => void get().checkUpdates(), UPDATE_CHECK_INTERVAL);
     try {
       const [system, network, config, list] = await Promise.all([
         api.systemInfo(),
