@@ -68,6 +68,8 @@ async fn run_pirate(loader: Loader, plugin_marker: &str) {
             max_players: 2,
             seed: Some("hearth".into()),
             eula_accepted: true,
+            pirate_mode: false,
+            nick_protection: false,
         })
         .await
         .unwrap()
@@ -85,7 +87,7 @@ async fn run_pirate(loader: Loader, plugin_marker: &str) {
     std::fs::create_dir_all(game.join("world/playerdata")).unwrap();
     std::fs::write(game.join(format!("world/playerdata/{online}.dat")), b"inventory").unwrap();
 
-    let on = manager.set_pirate_mode(&id, true, false).await.unwrap();
+    let on = manager.set_pirate_mode(&id, true, true).await.unwrap();
     println!("== включено: {:?} бэкап {:?} перенесено {}", on.auth, on.backup, on.migrated);
     assert!(on.auth.is_some(), "плагин авторизации поставлен");
     assert!(on.backup.as_deref().is_some_and(|b| std::path::Path::new(b).is_file()), "бэкап сделан");
@@ -137,6 +139,54 @@ async fn live_pirate_fabric() {
     run_pirate(Loader::Fabric, "easyauth").await;
 }
 
+/// Пиратский сервер прямо из мастера: защита ников ставится вместе с сервером,
+/// а её отдельный переключатель убирает и возвращает плагин.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_pirate_from_wizard() {
+    let shared = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("hearth-live");
+    let servers = tempfile::tempdir().unwrap();
+    let paths = Paths::new(shared.join("config"), shared.join("data"));
+    let http = Http::new(paths.cache_dir()).unwrap();
+    let manager = test_manager(&paths, &http, servers.path(), Arc::new(PrintSink::default()));
+    let version = providers::list_versions(&http, Loader::Paper, false).await.unwrap()[0].id.clone();
+    let id = manager
+        .create(CreateServerRequest {
+            name: "Пираты из мастера".into(),
+            loader: Loader::Paper,
+            game_version: version,
+            memory_mb: 2048,
+            port: Some(free_port()),
+            game_mode: GameMode::Creative,
+            difficulty: Difficulty::Peaceful,
+            max_players: 2,
+            seed: None,
+            eula_accepted: true,
+            pirate_mode: true,
+            nick_protection: true,
+        })
+        .await
+        .unwrap()
+        .id;
+    manager.start(&id).await.unwrap();
+    wait_running(&manager, &id).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(manager.console(&id).iter().any(|l| l.text.contains("AuthMe")), "AuthMe загрузился с первого запуска");
+    manager.stop(&id, STOP_TIMEOUT).await.unwrap();
+
+    let plugins = manager.store().game_dir(&id).join("plugins");
+    let jar = manager.get(&id).unwrap().meta.auth_plugin.expect("плагин записан в server.json");
+    assert!(plugins.join(&jar).is_file());
+
+    // Маленькой компании защита мешает: выключаем, jar убран, пароли (папка AuthMe) остались.
+    let meta = manager.set_nick_protection(&id, false).await.unwrap();
+    assert!(!meta.nick_protection && meta.auth_plugin.is_none() && meta.pirate_mode);
+    assert!(!plugins.join(&jar).exists() && plugins.join("AuthMe").is_dir());
+    // И обратно.
+    let meta = manager.set_nick_protection(&id, true).await.unwrap();
+    assert!(meta.nick_protection && plugins.join(meta.auth_plugin.unwrap()).is_file());
+}
+
 fn free_port() -> u16 {
     std::net::TcpListener::bind("0.0.0.0:0")
         .unwrap()
@@ -170,6 +220,8 @@ async fn run_server(loader: Loader) {
             max_players: 2,
             seed: Some("hearth".into()),
             eula_accepted: true,
+            pirate_mode: false,
+            nick_protection: false,
         })
         .await
         .unwrap();

@@ -50,6 +50,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         disable_friend_access,
         try_direct_access,
         set_pirate_mode,
+        set_nick_protection,
     ]
 }
 
@@ -59,13 +60,23 @@ async fn set_pirate_mode(
     state: State<'_, AppState>,
     id: String,
     enable: bool,
-    allow_without_auth: bool,
+    protect: bool,
 ) -> Result<PirateResult> {
     state
         .manager
-        .set_pirate_mode(&id, enable, allow_without_auth)
+        .set_pirate_mode(&id, enable, protect)
         .await
         .inspect_err(|e| tracing::warn!("Пиратский режим сервера {id}: {e}"))
+}
+
+/// Защита ников паролем (AuthMe/EasyAuth) отдельно от пиратского режима.
+#[tauri::command]
+async fn set_nick_protection(state: State<'_, AppState>, id: String, on: bool) -> Result<ServerMeta> {
+    state
+        .manager
+        .set_nick_protection(&id, on)
+        .await
+        .inspect_err(|e| tracing::warn!("Защита ников сервера {id}: {e}"))
 }
 
 /// Сначала пробуем без посредников: проброс порта на роутере.

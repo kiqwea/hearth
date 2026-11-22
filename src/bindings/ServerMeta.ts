@@ -35,4 +35,9 @@ authPlugin: string | null,
 /**
  * AuthMe уже переключён на русский язык.
  */
-authLangSet: boolean, };
+authLangSet: boolean, 
+/**
+ * Пользователь хочет защиту ников паролем. Если плагин ещё не стоит
+ * (`auth_plugin` пуст), Hearth поставит его при установке сервера.
+ */
+nickProtection: boolean, };

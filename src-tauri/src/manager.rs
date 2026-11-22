@@ -370,9 +370,11 @@ impl ServerManager {
     /// остановлен. Порядок: бэкап мира → плагин авторизации → перенос вещей
     /// игроков на новые UUID → server.properties.
     ///
-    /// `allow_without_auth`: пользователь подтвердил, что согласен без защиты
-    /// (Vanilla, или плагин не вышел под эту версию игры).
-    pub async fn set_pirate_mode(&self, id: &str, enable: bool, allow_without_auth: bool) -> Result<PirateResult> {
+    /// `protect`: поставить защиту ников паролем (AuthMe/EasyAuth). Для
+    /// маленькой компании друзей её можно не ставить. Если плагин не вышел
+    /// под эту версию игры, вернётся `AuthUnavailable`, и интерфейс предложит
+    /// включить без защиты.
+    pub async fn set_pirate_mode(&self, id: &str, enable: bool, protect: bool) -> Result<PirateResult> {
         let _guard = self.begin_busy(id)?;
         let store = self.store();
         let mut meta = store.load(id)?;
@@ -383,12 +385,7 @@ impl ServerManager {
             return Ok(PirateResult { meta, backup: None, migrated: 0, auth: None });
         }
 
-        let plugin = pirate::auth_plugin_for(meta.loader);
-        if enable && plugin.is_none() && !allow_without_auth {
-            return Err(Error::AuthUnavailable(
-                "Для Vanilla нет плагинов авторизации: любой сможет зайти под чужим ником".into(),
-            ));
-        }
+        let plugin = pirate::auth_plugin_for(meta.loader).filter(|_| protect);
 
         let backup = backups::backup_world(
             &game_dir,
@@ -401,19 +398,13 @@ impl ServerManager {
         let mut auth = None;
         if enable {
             if let Some(plugin) = &plugin {
-                match pirate::install_auth(&self.http, plugin, &game_dir, &meta.game_version).await {
-                    Ok(file) => {
-                        meta.auth_plugin = Some(file);
-                        auth = Some(plugin.title.to_string());
-                    }
-                    Err(e @ Error::AuthUnavailable(_)) if !allow_without_auth => return Err(e),
-                    Err(Error::AuthUnavailable(_)) => {}
-                    Err(e) => return Err(e),
-                }
+                let file = pirate::install_auth(&self.http, plugin, &game_dir, &meta.game_version).await?;
+                meta.auth_plugin = Some(file);
+                auth = Some(plugin.title.to_string());
             }
-        } else if let (Some(file), Some(folder)) = (meta.auth_plugin.take(), pirate::auth_folder(&game_dir, meta.loader)) {
-            // Данные плагина (пароли) остаются: при повторном включении они пригодятся.
-            let _ = tokio::fs::remove_file(folder.join(file)).await;
+            meta.nick_protection = meta.auth_plugin.is_some();
+        } else {
+            remove_auth_plugin(&mut meta, &game_dir).await;
         }
 
         // Вещи, достижения и права игроков: на новые UUID.
@@ -464,6 +455,31 @@ impl ServerManager {
             migrated: migrated as u32,
             auth,
         })
+    }
+
+    /// Включает или убирает защиту ников (пароль при входе) на сервере в
+    /// пиратском режиме. Сервер должен быть остановлен. Пароли игроков при
+    /// выключении сохраняются в данных плагина.
+    pub async fn set_nick_protection(&self, id: &str, on: bool) -> Result<ServerMeta> {
+        let _guard = self.begin_busy(id)?;
+        let store = self.store();
+        let mut meta = store.load(id)?;
+        if !meta.pirate_mode {
+            return Err(Error::invalid("Защита ников нужна только при входе с пиратских клиентов"));
+        }
+        let game_dir = store.game_dir(id);
+        if on {
+            let plugin = pirate::auth_plugin_for(meta.loader)
+                .ok_or_else(|| Error::AuthUnavailable("Для Vanilla нет защиты ников".into()))?;
+            if meta.auth_plugin.is_none() {
+                meta.auth_plugin = Some(pirate::install_auth(&self.http, &plugin, &game_dir, &meta.game_version).await?);
+            }
+        } else {
+            remove_auth_plugin(&mut meta, &game_dir).await;
+        }
+        meta.nick_protection = on;
+        store.save(&meta).await?;
+        Ok(meta)
     }
 
     /// Пробует прямое подключение (проброс порта на роутере). Если получилось,
@@ -714,6 +730,29 @@ impl ServerManager {
                     progress_reporter(&self.sink, id, InstallStage::Server, msg),
                 )
                 .await?;
+        }
+
+        // Пиратский режим выбран в мастере: ставим защиту ников вместе с сервером.
+        if meta.pirate_mode && meta.nick_protection && meta.auth_plugin.is_none() {
+            if let Some(plugin) = pirate::auth_plugin_for(meta.loader) {
+                self.emit_install(
+                    id,
+                    InstallProgress::step(InstallStage::Server, format!("Ставлю защиту ников ({})", plugin.title)),
+                );
+                match pirate::install_auth(&self.http, &plugin, &game_dir, &meta.game_version).await {
+                    Ok(file) => meta.auth_plugin = Some(file),
+                    Err(Error::AuthUnavailable(reason)) => {
+                        // Сервер всё равно запустится: без защиты, но с понятным объяснением.
+                        meta.nick_protection = false;
+                        self.push_line(
+                            id,
+                            ConsoleStream::System,
+                            format!("Защита ников не поставлена: {reason}. Включить её можно позже в настройках сервера."),
+                        );
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
         }
 
         meta.jar = Some(artifact.jar.file_name.clone());
@@ -972,6 +1011,15 @@ impl ServerManager {
         });
         futures_util::future::join_all(tasks).await;
     }
+}
+
+/// Убирает jar плагина авторизации. Его данные (пароли игроков) остаются:
+/// при повторном включении защиты они пригодятся.
+async fn remove_auth_plugin(meta: &mut ServerMeta, game_dir: &std::path::Path) {
+    if let (Some(file), Some(folder)) = (meta.auth_plugin.take(), pirate::auth_folder(game_dir, meta.loader)) {
+        let _ = tokio::fs::remove_file(folder.join(file)).await;
+    }
+    meta.nick_protection = false;
 }
 
 async fn write_line(running: &RunningServer, line: &str) -> std::io::Result<()> {

@@ -78,7 +78,9 @@ export interface HearthApi {
   /** Сначала без посредников: проброс порта на роутере (UPnP). */
   tryDirectAccess(id: string): Promise<DirectAttempt>;
   /** Пиратский режим: бэкап, плагин авторизации, перенос вещей игроков. Сервер должен быть остановлен. */
-  setPirateMode(id: string, enable: boolean, allowWithoutAuth: boolean): Promise<PirateResult>;
+  setPirateMode(id: string, enable: boolean, protect: boolean): Promise<PirateResult>;
+  /** Защита ников паролем (AuthMe/EasyAuth) на сервере в пиратском режиме. */
+  setNickProtection(id: string, on: boolean): Promise<ServerMeta>;
   disableFriendAccess(id: string): Promise<ServerMeta>;
 
   onEvent(handler: (event: Event) => void): Promise<() => void>;
@@ -155,7 +157,8 @@ const tauriApi: HearthApi = {
   playitDashboardUrl: () => invoke("playit_dashboard_url"),
   enableFriendAccess: (id) => invoke("enable_friend_access", { id }),
   tryDirectAccess: (id) => invoke("try_direct_access", { id }),
-  setPirateMode: (id, enable, allowWithoutAuth) => invoke("set_pirate_mode", { id, enable, allowWithoutAuth }),
+  setPirateMode: (id, enable, protect) => invoke("set_pirate_mode", { id, enable, protect }),
+  setNickProtection: (id, on) => invoke("set_nick_protection", { id, on }),
   disableFriendAccess: (id) => invoke("disable_friend_access", { id }),
 
   onEvent: (handler) => listen<Event>("hearth://event", (e) => handler(e.payload)),

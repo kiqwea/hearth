@@ -5,7 +5,7 @@ import type { Difficulty } from "../../bindings/Difficulty";
 import type { GameMode } from "../../bindings/GameMode";
 import type { GameVersion } from "../../bindings/GameVersion";
 import type { Loader } from "../../bindings/Loader";
-import { Button, Card, Field, inputClass, ProgressBar, Segmented, Spinner } from "../../components/ui";
+import { Button, Card, Field, inputClass, ProgressBar, Segmented, Spinner, Switch } from "../../components/ui";
 import { t } from "../../i18n";
 import { api, errorMessage, openExternal } from "../../lib/api";
 import { formatMb, gb, loaderName } from "../../lib/format";
@@ -22,6 +22,10 @@ interface FormState {
   maxPlayers: number;
   seed: string;
   port: number;
+  /** Вход с пиратских клиентов (TLauncher и др.). */
+  pirateMode: boolean;
+  /** Защита ников паролем в пиратском режиме. */
+  nickProtection: boolean;
 }
 
 const LOADERS: Loader[] = ["paper", "vanilla", "fabric"];
@@ -40,6 +44,8 @@ export function Wizard() {
     maxPlayers: 10,
     seed: "",
     port: 25565,
+    pirateMode: false,
+    nickProtection: true,
   }));
   const [createdId, setCreatedId] = useState<string | null>(null);
 
@@ -305,6 +311,31 @@ function FormStep({
         </div>
       </section>
 
+      <section aria-label={t.wizard.players} className="flex flex-col gap-3">
+        <h2 className="m-0 text-base font-semibold">{t.wizard.players}</h2>
+        <ToggleRow
+          label={t.pirate.label}
+          hint={t.wizard.pirateHint}
+          checked={form.pirateMode}
+          onChange={(v) => update("pirateMode", v)}
+        />
+        {form.pirateMode &&
+          (form.loader === "vanilla" ? (
+            <p className="m-0 flex items-start gap-2.5 px-3.5 py-3 rounded-[10px] bg-err-bg text-err text-[13px]">
+              <Info size={16} className="shrink-0 mt-0.5" aria-hidden="true" />
+              {t.wizard.vanillaNoProtection}
+            </p>
+          ) : (
+            <ToggleRow
+              label={t.protection.label}
+              hint={form.nickProtection ? t.protection.onHint : t.protection.offHint}
+              checked={form.nickProtection}
+              onChange={(v) => update("nickProtection", v)}
+              warn={!form.nickProtection}
+            />
+          ))}
+      </section>
+
       <details className="bg-card border border-line rounded-xl p-3.5 px-4">
         <summary className="font-semibold">{t.wizard.advanced}</summary>
         <div className="pt-3 max-w-[240px]">
@@ -331,6 +362,30 @@ function FormStep({
         </Button>
       </footer>
     </>
+  );
+}
+
+function ToggleRow({
+  label,
+  hint,
+  checked,
+  onChange,
+  warn,
+}: {
+  label: string;
+  hint: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  warn?: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-3 bg-card border border-line rounded-xl px-4 py-3">
+      <span className="flex-1 flex flex-col gap-0.5">
+        <span className="font-semibold">{label}</span>
+        <span className={`text-[13px] ${warn ? "text-warn" : "text-muted"}`}>{hint}</span>
+      </span>
+      <Switch checked={checked} onChange={onChange} label={label} />
+    </div>
   );
 }
 
@@ -377,6 +432,8 @@ function InstallStep({
           maxPlayers: form.maxPlayers,
           seed: form.seed.trim() || null,
           eulaAccepted: true,
+          pirateMode: form.pirateMode,
+          nickProtection: form.pirateMode && form.nickProtection && form.loader !== "vanilla",
         });
         id = meta.id;
         setCreatedId(id);

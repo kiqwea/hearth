@@ -56,6 +56,7 @@ function meta(partial: Partial<ServerMeta> & Pick<ServerMeta, "id" | "name" | "l
     pirateMode: false,
     authPlugin: null,
     authLangSet: false,
+    nickProtection: false,
     ...partial,
   };
 }
@@ -243,7 +244,19 @@ export function createMockApi(): HearthApi {
     createServer: async (req) => {
       const id = `server-${Math.random().toString(16).slice(2, 8)}`;
       add(
-        meta({ id, name: req.name, loader: req.loader, gameVersion: req.gameVersion, memoryMb: req.memoryMb, port: req.port ?? 25565, installed: false, jar: null }),
+        meta({
+          id,
+          name: req.name,
+          loader: req.loader,
+          gameVersion: req.gameVersion,
+          memoryMb: req.memoryMb,
+          port: req.port ?? 25565,
+          installed: false,
+          jar: null,
+          pirateMode: req.pirateMode,
+          nickProtection: req.nickProtection,
+          authPlugin: req.nickProtection ? "AuthMe.jar" : null,
+        }),
         { state: "stopped" },
       );
       return summary(id).meta;
@@ -339,22 +352,27 @@ export function createMockApi(): HearthApi {
       if (!playit.linked) throw { kind: "playitNotLinked", message: "Сначала подключите playit.gg" };
       return createTunnel(id);
     },
-    setPirateMode: async (id, enable, allowWithoutAuth) => {
+    setPirateMode: async (id, enable, protect) => {
       const s = servers.get(id)!;
       const plugin = s.meta.loader === "paper" ? "AuthMe Reloaded" : s.meta.loader === "fabric" ? "EasyAuth" : null;
-      if (enable && !plugin && !allowWithoutAuth) {
-        throw { kind: "authUnavailable", message: "Для Vanilla нет плагинов авторизации" };
-      }
       await wait(1800);
       s.meta.pirateMode = enable;
-      s.meta.authPlugin = enable && plugin ? `${plugin.split(" ")[0]}.jar` : null;
+      s.meta.authPlugin = enable && plugin && protect ? `${plugin.split(" ")[0]}.jar` : null;
+      s.meta.nickProtection = !!s.meta.authPlugin;
       s.props["online-mode"] = String(!enable);
       return {
         meta: { ...s.meta },
         backup: "C:\\Users\\…\\backups\\2026-11-22_pirate-on.zip",
         migrated: 3,
-        auth: enable ? plugin : null,
+        auth: s.meta.authPlugin ? plugin : null,
       };
+    },
+    setNickProtection: async (id, on) => {
+      const s = servers.get(id)!;
+      await wait(1000);
+      s.meta.authPlugin = on ? "AuthMe.jar" : null;
+      s.meta.nickProtection = on;
+      return { ...s.meta };
     },
     tryDirectAccess: async (id) => {
       const s = servers.get(id)!;

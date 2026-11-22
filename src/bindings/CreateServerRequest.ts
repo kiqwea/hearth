@@ -7,4 +7,12 @@ export type CreateServerRequest = { name: string, loader: Loader, gameVersion: s
 /**
  * Пользователь прочитал и принял EULA Mojang в мастере.
  */
-eulaAccepted: boolean, };
+eulaAccepted: boolean, 
+/**
+ * Сразу разрешить вход с пиратских клиентов.
+ */
+pirateMode: boolean, 
+/**
+ * В пиратском режиме: защитить ники паролем (AuthMe/EasyAuth).
+ */
+nickProtection: boolean, };

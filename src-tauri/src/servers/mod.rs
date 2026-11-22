@@ -118,6 +118,10 @@ pub struct ServerMeta {
     /// AuthMe уже переключён на русский язык.
     #[serde(default)]
     pub auth_lang_set: bool,
+    /// Пользователь хочет защиту ников паролем. Если плагин ещё не стоит
+    /// (`auth_plugin` пуст), Hearth поставит его при установке сервера.
+    #[serde(default)]
+    pub nick_protection: bool,
 }
 
 /// Туннель playit этого сервера. Создаётся один раз и не меняется между запусками.
@@ -147,6 +151,12 @@ pub struct CreateServerRequest {
     pub seed: Option<String>,
     /// Пользователь прочитал и принял EULA Mojang в мастере.
     pub eula_accepted: bool,
+    /// Сразу разрешить вход с пиратских клиентов.
+    #[serde(default)]
+    pub pirate_mode: bool,
+    /// В пиратском режиме: защитить ники паролем (AuthMe/EasyAuth).
+    #[serde(default)]
+    pub nick_protection: bool,
 }
 
 /// Изменение метаданных из настроек сервера. `None` = не менять.
@@ -337,9 +347,11 @@ impl ServerStore {
             created_at: now,
             playit: None,
             direct_access: false,
-            pirate_mode: false,
+            pirate_mode: req.pirate_mode,
             auth_plugin: None,
             auth_lang_set: false,
+            // Для Vanilla защиты ников не бывает.
+            nick_protection: req.pirate_mode && req.nick_protection && req.loader != Loader::Vanilla,
         };
 
         let game_dir = self.game_dir(&id);
@@ -352,7 +364,11 @@ impl ServerStore {
         props.set("difficulty", req.difficulty.as_property());
         props.set("max-players", &req.max_players.to_string());
         props.set("level-seed", req.seed.as_deref().unwrap_or("").trim());
-        props.set("online-mode", "true");
+        props.set("online-mode", if req.pirate_mode { "false" } else { "true" });
+        if req.pirate_mode {
+            // Пиратские клиенты не подписывают чат: без этого им нельзя писать сообщения.
+            props.set("enforce-secure-profile", "false");
+        }
         // Новые версии Minecraft (26.x) по умолчанию включают белый список,
         // и друзья не могут зайти. Hearth рассчитан на игру с друзьями,
         // поэтому выключаем его явно; включить можно в настройках сервера.
@@ -417,6 +433,8 @@ mod tests {
             max_players: 10,
             seed: Some("12345".into()),
             eula_accepted: true,
+            pirate_mode: false,
+            nick_protection: false,
         }
     }
 
@@ -447,6 +465,32 @@ mod tests {
 
         store.delete(&meta.id).await.unwrap();
         assert!(store.list().is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_in_pirate_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ServerStore::new(dir.path().to_path_buf());
+        let meta = store
+            .create(CreateServerRequest { pirate_mode: true, nick_protection: true, ..request("Пираты") })
+            .await
+            .unwrap();
+        assert!(meta.pirate_mode && meta.nick_protection && meta.auth_plugin.is_none());
+        let props = store.read_properties(&meta.id).unwrap();
+        assert_eq!(props.get("online-mode"), Some("false"));
+        assert_eq!(props.get("enforce-secure-profile"), Some("false"));
+
+        // Vanilla: защиты ников не бывает, даже если её попросили.
+        let vanilla = store
+            .create(CreateServerRequest { pirate_mode: true, nick_protection: true, loader: Loader::Vanilla, ..request("Ваниль") })
+            .await
+            .unwrap();
+        assert!(vanilla.pirate_mode && !vanilla.nick_protection);
+
+        // Без пиратского режима защита не включается.
+        let normal = store.create(CreateServerRequest { nick_protection: true, ..request("Обычный") }).await.unwrap();
+        assert!(!normal.pirate_mode && !normal.nick_protection);
+        assert_eq!(store.read_properties(&normal.id).unwrap().get("online-mode"), Some("true"));
     }
 
     #[tokio::test]
