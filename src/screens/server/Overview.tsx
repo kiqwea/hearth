@@ -1,12 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Copy, Info, TriangleExclamationPoint } from "lucide-react";
+import { Info, TriangleExclamationPoint } from "lucide-react";
 
 import type { ServerSummary } from "../../bindings/ServerSummary";
 import { ConsolePanel } from "../../components/ConsolePanel";
 import { FriendAccess } from "./FriendAccess";
-import { Card, IconButton } from "../../components/ui";
+import { Card } from "../../components/ui";
 import { t } from "../../i18n";
-import { copyText, formatGb, formatUptime, loaderName, withPort } from "../../lib/format";
+import { formatGb, formatUptime, loaderName } from "../../lib/format";
 import { useHearth } from "../../lib/store";
 
 export function Overview({ server }: { server: ServerSummary }) {
@@ -61,34 +61,9 @@ export function Overview({ server }: { server: ServerSummary }) {
       <Card label={t.overview.connect} className="px-5 py-[18px] flex flex-col gap-3.5">
         <h2 className="m-0 text-base font-semibold">{t.overview.connect}</h2>
         <FriendAccess server={server} />
-        <div className="flex flex-wrap gap-2.5">
-          <Address label={t.overview.local} value={withPort("localhost", meta.port)} />
-        </div>
       </Card>
 
       <ConsolePanel id={meta.id} compact onOpenFull={() => openServer(meta.id, "console")} />
-    </div>
-  );
-}
-
-function Address({ label, value }: { label: string; value: string | null }) {
-  const toast = useHearth((s) => s.toast);
-  return (
-    <div className="flex-[1_1_220px] flex items-center justify-between gap-2.5 px-3.5 py-2.5 border border-line rounded-[10px]">
-      <span className="flex flex-col gap-0.5 min-w-0">
-        <span className="text-xs text-muted">{label}</span>
-        <span className={`font-mono selectable truncate ${value ? "" : "text-faint"}`}>{value ?? t.overview.lanUnknown}</span>
-      </span>
-      {value && (
-        <IconButton
-          label={`${t.actions.copy}: ${label}`}
-          onClick={async () => {
-            if (await copyText(value)) toast("success", `${t.actions.copied}: ${value}`);
-          }}
-        >
-          <Copy size={16} aria-hidden="true" />
-        </IconButton>
-      )}
     </div>
   );
 }
