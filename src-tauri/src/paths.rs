@@ -1,7 +1,7 @@
 //! Где Hearth хранит данные.
 //!
 //! - `%APPDATA%\Hearth\config.json`: настройки приложения (лёгкие, можно в roaming).
-//! - `%LOCALAPPDATA%\Hearth\`: всё тяжёлое (JRE, кэш, логи, серверы по умолчанию).
+//! - `%LOCALAPPDATA%\Hearth\`: всё тяжёлое (JRE, кэш, логи, агент playit, серверы по умолчанию).
 
 use std::path::PathBuf;
 
@@ -42,6 +42,11 @@ impl Paths {
 
     pub fn logs_dir(&self) -> PathBuf {
         self.data_dir.join("logs")
+    }
+
+    /// Агент playit.gg, его логи и кэш адресов туннелей.
+    pub fn playit_dir(&self) -> PathBuf {
+        self.data_dir.join("playit")
     }
 
     pub fn default_servers_dir(&self) -> PathBuf {

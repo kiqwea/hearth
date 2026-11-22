@@ -29,8 +29,11 @@ use crate::paths::Paths;
 use crate::process::{self, job::Job, ConsoleBuffer, ConsoleLine, ConsoleStream, ServerStatus};
 use crate::providers;
 use crate::servers::{
-    self, CreateServerRequest, PropertyEntry, ServerMeta, ServerPatch, ServerStore,
+    self, CreateServerRequest, PlayitTunnel, PropertyEntry, ServerMeta, ServerPatch, ServerStore,
 };
+use crate::tunnel::api::PlayitApi;
+use crate::tunnel::secret::SecretStore;
+use crate::tunnel::PlayitManager;
 
 /// Сколько ждём сохранения мира после `stop`, прежде чем предложить принудительное завершение.
 pub const STOP_TIMEOUT: Duration = Duration::from_secs(90);
@@ -67,7 +70,10 @@ pub struct ServerManager {
     store: RwLock<ServerStore>,
     sink: Arc<dyn EventSink>,
     inner: Mutex<Inner>,
-    job: Option<Job>,
+    job: Option<Arc<Job>>,
+    playit: Arc<PlayitManager>,
+    /// Включение и отключение доступа для друзей идут по очереди, чтобы не создать два туннеля.
+    access_ops: tokio::sync::Mutex<()>,
 }
 
 /// Снимает отметку «занят», когда операция закончилась (в том числе с ошибкой).
@@ -84,13 +90,36 @@ impl Drop for BusyGuard<'_> {
 
 impl ServerManager {
     pub fn new(paths: &Paths, http: Http, servers_dir: PathBuf, sink: Arc<dyn EventSink>) -> Arc<Self> {
+        #[cfg(windows)]
+        let secrets: Box<dyn SecretStore> = Box::new(crate::tunnel::secret::CredentialStore::new("Hearth/playit.gg"));
+        #[cfg(not(windows))]
+        let secrets: Box<dyn SecretStore> = Box::new(crate::tunnel::secret::MemoryStore::default());
+        Self::with_secrets(paths, http, servers_dir, sink, secrets)
+    }
+
+    /// Как `new`, но со своим хранилищем ключа playit (для тестов).
+    pub fn with_secrets(
+        paths: &Paths,
+        http: Http,
+        servers_dir: PathBuf,
+        sink: Arc<dyn EventSink>,
+        secrets: Box<dyn SecretStore>,
+    ) -> Arc<Self> {
         let job = match Job::new() {
-            Ok(job) => Some(job),
+            Ok(job) => Some(Arc::new(job)),
             Err(e) => {
                 tracing::warn!("Не удалось создать Job Object: {e}");
                 None
             }
         };
+        let playit = PlayitManager::new(
+            http.clone(),
+            PlayitApi::new(http.client().clone()),
+            paths.playit_dir(),
+            secrets,
+            sink.clone(),
+            job.clone(),
+        );
         Arc::new(Self {
             java: JavaManager::new(paths.java_dir(), &paths.cache_dir(), http.clone()),
             http,
@@ -98,7 +127,13 @@ impl ServerManager {
             sink,
             inner: Mutex::new(Inner::default()),
             job,
+            playit,
+            access_ops: tokio::sync::Mutex::new(()),
         })
+    }
+
+    pub fn playit(&self) -> &Arc<PlayitManager> {
+        &self.playit
     }
 
     pub fn http(&self) -> &Http {
@@ -233,13 +268,125 @@ impl ServerManager {
         Ok(meta)
     }
 
-    pub async fn delete(&self, id: &str) -> Result<()> {
+    /// Удаляет сервер с диска. `delete_tunnel`: удалить и его адрес в аккаунте
+    /// playit (если не получится, например без интернета, сервер всё равно удаляется).
+    pub async fn delete(&self, id: &str, delete_tunnel: bool) -> Result<()> {
         let _guard = self.begin_busy(id)?;
-        self.store().delete(id).await?;
-        let mut inner = self.lock();
-        inner.statuses.remove(id);
-        inner.consoles.remove(id);
+        let store = self.store();
+        let tunnel = store.load(id).ok().and_then(|m| m.playit);
+        store.delete(id).await?;
+        {
+            let mut inner = self.lock();
+            inner.statuses.remove(id);
+            inner.consoles.remove(id);
+        }
+        self.playit.release(id).await;
+        if let (true, Some(tunnel)) = (delete_tunnel, tunnel) {
+            if let Err(e) = self.playit.delete_tunnel(&tunnel.tunnel_id).await {
+                tracing::warn!("Не удалось удалить туннель playit {} сервера {id}: {e}", tunnel.tunnel_id);
+            }
+        }
         Ok(())
+    }
+
+    // ---- доступ для друзей (playit.gg) ----
+
+    /// Порт сервера. Источник правды — server.properties: его могли поправить вручную.
+    fn current_port(&self, store: &ServerStore, id: &str, meta: &ServerMeta) -> u16 {
+        store
+            .read_properties(id)
+            .ok()
+            .and_then(|p| p.get("server-port").and_then(|p| p.trim().parse::<u16>().ok()))
+            .unwrap_or(meta.port)
+    }
+
+    /// Создаёт серверу постоянный адрес для друзей. Если сервер запущен,
+    /// адрес заработает сразу.
+    pub async fn enable_friend_access(self: &Arc<Self>, id: &str) -> Result<ServerMeta> {
+        let _ops = self.access_ops.lock().await;
+        let store = self.store();
+        let mut meta = store.load(id)?;
+        if let Some(tunnel) = &meta.playit {
+            // Туннель есть. Создаём новый, только если его удалили в панели playit.
+            if !self.playit.tunnel_missing(&tunnel.tunnel_id).await {
+                return Ok(meta);
+            }
+        }
+        let port = self.current_port(&store, id, &meta);
+        let tunnel_id = self.playit.create_tunnel(id, port).await?;
+        meta.playit = Some(PlayitTunnel {
+            tunnel_id,
+            local_port: port,
+            created_at: chrono::Utc::now(),
+        });
+        store.save(&meta).await?;
+        if self.running(id).is_some() {
+            self.start_friend_access(id, &meta, port);
+        }
+        Ok(meta)
+    }
+
+    /// Убирает адрес для друзей: туннель удаляется из аккаунта playit.
+    pub async fn disable_friend_access(&self, id: &str) -> Result<ServerMeta> {
+        let _ops = self.access_ops.lock().await;
+        let store = self.store();
+        let mut meta = store.load(id)?;
+        if let Some(tunnel) = &meta.playit {
+            match self.playit.delete_tunnel(&tunnel.tunnel_id).await {
+                Ok(()) => {}
+                // Без интернета пусть попробует позже: иначе туннель останется в аккаунте.
+                Err(e @ Error::Network(_)) => return Err(e),
+                // Остальное (playit не подключён, отказ API) не должно мешать отключить доступ:
+                // агент для этого сервера больше не запускается, а туннель можно удалить в панели playit.
+                Err(e) => tracing::warn!("Туннель playit {} не удалён: {e}", tunnel.tunnel_id),
+            }
+        }
+        meta.playit = None;
+        store.save(&meta).await?;
+        self.playit.release(id).await;
+        Ok(meta)
+    }
+
+    /// Сервер с доступом для друзей запустился: поправить порт туннеля, если
+    /// он поменялся, и поднять агент playit. Ошибки пишутся в консоль сервера.
+    fn start_friend_access(self: &Arc<Self>, id: &str, meta: &ServerMeta, port: u16) {
+        let Some(tunnel) = meta.playit.clone() else { return };
+        let this = self.clone();
+        let id = id.to_string();
+        tokio::spawn(async move {
+            if tunnel.local_port != port {
+                match this.playit.configure_port(&tunnel.tunnel_id, port).await {
+                    Ok(()) => {
+                        let _ops = this.access_ops.lock().await;
+                        let store = this.store();
+                        if let Ok(mut meta) = store.load(&id) {
+                            if let Some(t) = meta.playit.as_mut().filter(|t| t.tunnel_id == tunnel.tunnel_id) {
+                                t.local_port = port;
+                                let _ = store.save(&meta).await;
+                            }
+                        }
+                    }
+                    Err(e) => this.push_line(&id, ConsoleStream::System, format!("Доступ для друзей: {e}")),
+                }
+            }
+            if this.running(&id).is_none() {
+                return;
+            }
+            let result = this.playit.acquire(&id).await;
+            if this.running(&id).is_none() {
+                // Сервер успел остановиться, пока запускался агент.
+                this.playit.release(&id).await;
+                return;
+            }
+            match result {
+                Ok(()) => {
+                    if let Some(address) = this.playit.address(&tunnel.tunnel_id) {
+                        this.push_line(&id, ConsoleStream::System, format!("Адрес для друзей: {address}"));
+                    }
+                }
+                Err(e) => this.push_line(&id, ConsoleStream::System, format!("Доступ для друзей не включился: {e}")),
+            }
+        });
     }
 
     pub fn properties(&self, id: &str) -> Result<Vec<PropertyEntry>> {
@@ -447,6 +594,7 @@ impl ServerManager {
         let err_task = self.spawn_reader(id, stderr, ConsoleStream::Stderr);
 
         let this = self.clone();
+        let id_owned = id.to_string();
         let id = id.to_string();
         tokio::spawn(async move {
             let kill = async move {
@@ -484,7 +632,9 @@ impl ServerManager {
             this.push_line(&id, ConsoleStream::System, message);
             this.set_status(&id, status);
             let _ = exit_tx.send(true);
+            this.playit.release(&id).await;
         });
+        self.start_friend_access(&id_owned, &meta, port);
         Ok(())
     }
 

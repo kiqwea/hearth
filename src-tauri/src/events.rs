@@ -7,6 +7,7 @@ use serde::Serialize;
 use ts_rs::TS;
 
 use crate::process::{ConsoleLine, ServerStatus};
+use crate::tunnel::PlayitStatus;
 
 pub trait EventSink: Send + Sync {
     fn emit(&self, event: Event);
@@ -26,6 +27,8 @@ pub enum Event {
     Console(ConsoleEvent),
     Status(StatusEvent),
     Install(InstallEvent),
+    /// Изменилось состояние playit: подключение аккаунта, агент, адреса туннелей.
+    Playit(PlayitStatus),
 }
 
 #[derive(Serialize, Clone, Debug, TS)]

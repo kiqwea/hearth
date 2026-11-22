@@ -131,7 +131,8 @@
 - Установщик NSIS ставит программу для текущего пользователя в тот же `%LOCALAPPDATA%\Hearth` (так делает шаблон Tauri). Удаление стирает только `hearth.exe`, `uninstall.exe` и ярлык, а `java`, `cache`, `logs`, `servers` остаются (проверено). Размер установщика около 3 МБ.
 - Minecraft 26.x при первом запуске включает `white-list=true`; Hearth при создании сервера явно ставит `white-list=false`.
 - Job Object в MVP. Процесс-сторож, который при падении приложения отправит `stop`, сделаем позже.
-- Токен playit хранится в Windows Credential Manager (crate `keyring`).
+- Токен playit хранится в Windows Credential Manager (запись `Hearth/playit.gg`). Crate `keyring` не взяли: в версии 4 он сменил API, а Credential Manager через уже подключённый crate `windows` занимает 60 строк.
+- playit (2026-11-22, агент 2.0.x): Hearth скачивает с GitHub подписанный `playitd-windows-x86_64-signed.exe` последней стабильной версии 2.x (проверка SHA-256 из `digest` релиза) в `%LOCALAPPDATA%\Hearth\playit`. Подключение аккаунта, создание и удаление туннелей Hearth делает сам через API `api.playit.gg` (`/claim/setup`, `/claim/exchange`, `/v1/agents/rundata`, `/v1/tunnels/create`, `/v1/tunnels/config`, `/tunnels/delete`) с ключом агента типа `self-managed`. Агент запускается как `playitd --secret … --socket-path \\.\pipe\hearth-playit-<pid>` со своим каналом управления, поэтому не мешает отдельно установленному playit. Агент привязан к Job Object.
 - При закрытии окна с запущенным сервером приложение по умолчанию сворачивается в трей.
 - Макеты дизайна делаем перед созданием интерфейса, а не до каркаса.
 - Адрес для друзей: у каждого сервера свой постоянный туннель playit, его id хранится в `server.json`. Адрес не меняется между запусками. Подробности в разделе 5.

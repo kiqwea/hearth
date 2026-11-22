@@ -117,6 +117,7 @@ pub(crate) fn request_quit(app: &AppHandle) {
             tracing::info!("Выход: останавливаю серверы");
             manager.stop_all(QUIT_STOP_TIMEOUT).await;
         }
+        manager.playit().shutdown().await;
         app.exit(0);
     });
 }

@@ -15,6 +15,7 @@ import type { GameVersion } from "../bindings/GameVersion";
 import type { InstalledJava } from "../bindings/InstalledJava";
 import type { Loader } from "../bindings/Loader";
 import type { NetworkInfo } from "../bindings/NetworkInfo";
+import type { PlayitStatus } from "../bindings/PlayitStatus";
 import type { PropertyEntry } from "../bindings/PropertyEntry";
 import type { ServerMeta } from "../bindings/ServerMeta";
 import type { ServerPatch } from "../bindings/ServerPatch";
@@ -49,7 +50,8 @@ export interface HearthApi {
   getServer(id: string): Promise<ServerSummary>;
   createServer(request: CreateServerRequest): Promise<ServerMeta>;
   updateServer(id: string, patch: ServerPatch): Promise<ServerMeta>;
-  deleteServer(id: string): Promise<void>;
+  /** `deleteTunnel`: удалить и адрес сервера в аккаунте playit. */
+  deleteServer(id: string, deleteTunnel: boolean): Promise<void>;
   installServer(id: string): Promise<ServerMeta>;
   start(id: string): Promise<void>;
   stop(id: string): Promise<void>;
@@ -61,6 +63,18 @@ export interface HearthApi {
   setProperties(id: string, entries: PropertyEntry[]): Promise<void>;
   openFolder(id: string): Promise<void>;
   stopAll(): Promise<void>;
+
+  // Доступ для друзей через playit.gg
+  playitStatus(): Promise<PlayitStatus>;
+  /** Начинает подключение к аккаунту playit; возвращает ссылку для браузера. */
+  playitStartClaim(): Promise<string>;
+  playitCancelClaim(): Promise<void>;
+  playitUnlink(): Promise<void>;
+  playitRetry(): Promise<void>;
+  playitDashboardUrl(): Promise<string>;
+  enableFriendAccess(id: string): Promise<ServerMeta>;
+  disableFriendAccess(id: string): Promise<ServerMeta>;
+
   onEvent(handler: (event: Event) => void): Promise<() => void>;
   /** Есть ли новая версия Hearth. `null`, если установлена последняя. */
   checkUpdate(): Promise<AvailableUpdate | null>;
@@ -112,7 +126,7 @@ const tauriApi: HearthApi = {
   getServer: (id) => invoke("get_server", { id }),
   createServer: (request) => invoke("create_server", { request }),
   updateServer: (id, patch) => invoke("update_server", { id, patch }),
-  deleteServer: (id) => invoke("delete_server", { id }),
+  deleteServer: (id, deleteTunnel) => invoke("delete_server", { id, deleteTunnel }),
   installServer: (id) => invoke("install_server", { id }),
 
   start: (id) => invoke("start_server", { id }),
@@ -126,6 +140,15 @@ const tauriApi: HearthApi = {
   setProperties: (id, entries) => invoke("set_properties", { id, entries }),
   openFolder: (id) => invoke("open_server_folder", { id }),
   stopAll: () => invoke("stop_all_servers"),
+
+  playitStatus: () => invoke("get_playit_status"),
+  playitStartClaim: () => invoke("playit_start_claim"),
+  playitCancelClaim: () => invoke("playit_cancel_claim"),
+  playitUnlink: () => invoke("playit_unlink"),
+  playitRetry: () => invoke("playit_retry"),
+  playitDashboardUrl: () => invoke("playit_dashboard_url"),
+  enableFriendAccess: (id) => invoke("enable_friend_access", { id }),
+  disableFriendAccess: (id) => invoke("disable_friend_access", { id }),
 
   onEvent: (handler) => listen<Event>("hearth://event", (e) => handler(e.payload)),
   checkUpdate: tauriCheckUpdate,

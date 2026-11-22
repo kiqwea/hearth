@@ -40,6 +40,11 @@ impl Http {
         Ok(Self { client, cache_dir })
     }
 
+    /// Сам клиент: для API, которым нужен POST (например, playit.gg).
+    pub fn client(&self) -> &reqwest::Client {
+        &self.client
+    }
+
     pub async fn get_text(&self, service: &str, url: &str) -> Result<String> {
         let resp = self
             .client

@@ -102,6 +102,21 @@ pub struct ServerMeta {
     pub installed: bool,
     pub eula_accepted_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    /// Постоянный адрес для друзей через playit.gg. `null`: доступ не включён.
+    #[serde(default)]
+    pub playit: Option<PlayitTunnel>,
+}
+
+/// Туннель playit этого сервера. Создаётся один раз и не меняется между запусками.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PlayitTunnel {
+    pub tunnel_id: String,
+    /// Порт, на который туннель ведёт игроков. Если порт сервера поменяли,
+    /// Hearth перенастроит туннель при следующем запуске.
+    pub local_port: u16,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Deserialize, Clone, Debug, TS)]
@@ -302,6 +317,7 @@ impl ServerStore {
             installed: false,
             eula_accepted_at: Some(now),
             created_at: now,
+            playit: None,
         };
 
         let game_dir = self.game_dir(&id);

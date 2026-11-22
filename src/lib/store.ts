@@ -8,11 +8,12 @@ import type { ConsoleLine } from "../bindings/ConsoleLine";
 import type { Event } from "../bindings/Event";
 import type { InstallProgress } from "../bindings/InstallProgress";
 import type { NetworkInfo } from "../bindings/NetworkInfo";
+import type { PlayitStatus } from "../bindings/PlayitStatus";
 import type { ServerStatus } from "../bindings/ServerStatus";
 import type { ServerSummary } from "../bindings/ServerSummary";
 import type { SystemInfo } from "../bindings/SystemInfo";
 import { t } from "../i18n";
-import { api, errorMessage, type AvailableUpdate } from "./api";
+import { api, errorMessage, openExternal, type AvailableUpdate } from "./api";
 
 /** Сколько строк консоли держим в интерфейсе на сервер (столько же хранит ядро). */
 const CONSOLE_LIMIT = 5000;
@@ -48,6 +49,18 @@ interface HearthState {
   /** Новая версия Hearth, если вышла. */
   update: AvailableUpdate | null;
   updateDialogOpen: boolean;
+  /** Состояние playit.gg: подключение аккаунта, агент, адреса туннелей. */
+  playit: PlayitStatus | null;
+  /** Сервер, которому включим доступ для друзей, как только playit подключится. */
+  pendingAccess: string | null;
+  /** Серверы, для которых сейчас создаётся или удаляется адрес. */
+  accessBusy: Record<string, boolean>;
+
+  /** «Включить доступ для друзей»: при необходимости сначала подключает playit через браузер. */
+  connectFriendAccess(id: string): Promise<void>;
+  enableFriendAccess(id: string): Promise<void>;
+  disableFriendAccess(id: string): Promise<void>;
+  cancelPlayitClaim(): Promise<void>;
 
   /** Проверка обновлений. `manual` — по кнопке: тогда сообщаем и об ошибке, и о том, что обновлений нет. */
   checkUpdates(manual?: boolean): Promise<void>;
@@ -82,6 +95,55 @@ export const useHearth = create<HearthState>((set, get) => ({
   appSettingsOpen: false,
   update: null,
   updateDialogOpen: false,
+  playit: null,
+  pendingAccess: null,
+  accessBusy: {},
+
+  async connectFriendAccess(id) {
+    const playit = get().playit;
+    if (playit?.linked) return get().enableFriendAccess(id);
+    set({ pendingAccess: id });
+    try {
+      const url = await api.playitStartClaim();
+      await openExternal(url);
+    } catch (e) {
+      set({ pendingAccess: null });
+      get().toastError(e);
+    }
+  },
+
+  async enableFriendAccess(id) {
+    set((st) => ({ accessBusy: { ...st.accessBusy, [id]: true } }));
+    try {
+      const meta = await api.enableFriendAccess(id);
+      setMeta(meta);
+      get().toast("success", t.access.enabled);
+    } catch (e) {
+      get().toastError(e);
+    } finally {
+      set((st) => ({ accessBusy: { ...st.accessBusy, [id]: false } }));
+    }
+  },
+
+  async disableFriendAccess(id) {
+    set((st) => ({ accessBusy: { ...st.accessBusy, [id]: true } }));
+    try {
+      setMeta(await api.disableFriendAccess(id));
+    } catch (e) {
+      get().toastError(e);
+    } finally {
+      set((st) => ({ accessBusy: { ...st.accessBusy, [id]: false } }));
+    }
+  },
+
+  async cancelPlayitClaim() {
+    set({ pendingAccess: null });
+    try {
+      await api.playitCancelClaim();
+    } catch (e) {
+      get().toastError(e);
+    }
+  },
 
   async checkUpdates(manual = false) {
     try {
@@ -127,6 +189,11 @@ export const useHearth = create<HearthState>((set, get) => ({
       set({ view: { kind: "welcome" } });
       get().toastError(e);
     }
+    // playit не обязателен для работы: без интернета просто покажем сохранённые адреса.
+    api.playitStatus().then(
+      (playit) => set({ playit }),
+      (e) => console.warn("Не удалось получить состояние playit", e),
+    );
   },
 
   async refreshServers() {
@@ -228,6 +295,30 @@ function handleEvent(event: Event) {
     case "install":
       useHearth.setState((st) => ({ install: { ...st.install, [event.data.serverId]: event.data.progress } }));
       break;
+    case "playit":
+      onPlayit(event.data);
+      break;
+  }
+}
+
+function setMeta(meta: ServerSummary["meta"]) {
+  useHearth.setState((st) => {
+    const existing = st.servers[meta.id];
+    return existing ? { servers: { ...st.servers, [meta.id]: { ...existing, meta } } } : {};
+  });
+}
+
+function onPlayit(playit: PlayitStatus) {
+  const { pendingAccess, enableFriendAccess } = useHearth.getState();
+  useHearth.setState({ playit });
+  if (!pendingAccess) return;
+  if (playit.linked) {
+    // Пользователь подтвердил подключение в браузере: сразу создаём адрес.
+    useHearth.setState({ pendingAccess: null });
+    void enableFriendAccess(pendingAccess);
+  } else if (!playit.claimUrl) {
+    // Подключение отменили или оно не удалось (ошибка видна на карточке).
+    useHearth.setState({ pendingAccess: null });
   }
 }
 

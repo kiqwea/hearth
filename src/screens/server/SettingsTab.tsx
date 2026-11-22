@@ -25,6 +25,7 @@ export function SettingsTab({ server }: { server: ServerSummary }) {
   const [memoryMb, setMemoryMb] = useState(meta.memoryMb);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteTunnel, setDeleteTunnel] = useState(true);
 
   const load = useCallback(async () => {
     try {
@@ -91,7 +92,7 @@ export function SettingsTab({ server }: { server: ServerSummary }) {
   async function remove() {
     setConfirmDelete(false);
     try {
-      await api.deleteServer(meta.id);
+      await api.deleteServer(meta.id, deleteTunnel);
       removeServer(meta.id);
     } catch (e) {
       toastError(e);
@@ -218,6 +219,17 @@ export function SettingsTab({ server }: { server: ServerSummary }) {
         }
       >
         <p className="m-0">{t.settings.deleteConfirmText(meta.name)}</p>
+        {meta.playit && (
+          <label className="flex items-center gap-2.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={deleteTunnel}
+              onChange={(e) => setDeleteTunnel(e.target.checked)}
+              className="w-4 h-4"
+            />
+            <span>{t.access.deleteTunnel}</span>
+          </label>
+        )}
       </Dialog>
     </div>
   );

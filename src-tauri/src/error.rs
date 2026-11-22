@@ -56,6 +56,12 @@ pub enum Error {
     #[error("Сервер не остановился вовремя. Можно подождать ещё или завершить его принудительно (несохранённые изменения мира могут пропасть).")]
     StopTimeout,
 
+    #[error("Сначала подключите playit.gg: без этого Hearth не может выдать адрес для друзей")]
+    PlayitNotLinked,
+
+    #[error("Подключение к playit.gg больше не действует (например, агента удалили в аккаунте playit). Подключите playit заново.")]
+    PlayitKeyInvalid,
+
     #[error("{0}")]
     InvalidInput(String),
 
@@ -89,6 +95,8 @@ impl Error {
             Error::EulaNotAccepted => "eulaNotAccepted",
             Error::JavaUnavailable(_) => "javaUnavailable",
             Error::StopTimeout => "stopTimeout",
+            Error::PlayitNotLinked => "playitNotLinked",
+            Error::PlayitKeyInvalid => "playitKeyInvalid",
             Error::InvalidInput(_) => "invalidInput",
             Error::Other(_) => "other",
         }

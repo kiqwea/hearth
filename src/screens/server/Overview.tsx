@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Copy, Globe, Info, TriangleExclamationPoint } from "lucide-react";
+import { Copy, Info, TriangleExclamationPoint } from "lucide-react";
 
 import type { ServerSummary } from "../../bindings/ServerSummary";
 import { ConsolePanel } from "../../components/ConsolePanel";
+import { FriendAccess } from "./FriendAccess";
 import { Card, IconButton } from "../../components/ui";
 import { t } from "../../i18n";
 import { copyText, formatGb, formatUptime, loaderName, withPort } from "../../lib/format";
@@ -60,13 +61,7 @@ export function Overview({ server }: { server: ServerSummary }) {
 
       <Card label={t.overview.connect} className="px-5 py-[18px] flex flex-col gap-3.5">
         <h2 className="m-0 text-base font-semibold">{t.overview.connect}</h2>
-        <div className="flex items-start gap-3 px-3.5 py-3 rounded-[10px] bg-raised">
-          <Globe size={20} className="text-faint shrink-0 mt-0.5" aria-hidden="true" />
-          <span className="flex flex-col gap-1">
-            <span className="text-xs text-muted">{t.overview.internet}</span>
-            <span className="text-soft">{t.overview.internetSoon}</span>
-          </span>
-        </div>
+        <FriendAccess server={server} />
         <div className="flex flex-wrap gap-2.5">
           <Address label={t.overview.lan} value={network?.lanIp ? withPort(network.lanIp, meta.port) : null} />
           <Address label={t.overview.local} value={withPort("localhost", meta.port)} />

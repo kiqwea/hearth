@@ -6,6 +6,8 @@ import type { ConsoleStream } from "../bindings/ConsoleStream";
 import type { Event } from "../bindings/Event";
 import type { GameVersion } from "../bindings/GameVersion";
 import type { InstallProgress } from "../bindings/InstallProgress";
+import type { PlayitAgentState } from "../bindings/PlayitAgentState";
+import type { PlayitStatus } from "../bindings/PlayitStatus";
 import type { ServerMeta } from "../bindings/ServerMeta";
 import type { ServerStatus } from "../bindings/ServerStatus";
 import type { HearthApi } from "./api";
@@ -48,6 +50,7 @@ function meta(partial: Partial<ServerMeta> & Pick<ServerMeta, "id" | "name" | "l
     installed: true,
     eulaAcceptedAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
+    playit: null,
     ...partial,
   };
 }
@@ -78,6 +81,38 @@ export function createMockApi(): HearthApi {
     emit({ type: "status", data: { serverId: id, status } });
   };
   const progress = (id: string, p: InstallProgress) => emit({ type: "install", data: { serverId: id, progress: p } });
+
+  // playit.gg: подключение аккаунта, агент и туннели.
+  const playit: PlayitStatus = {
+    linked: false,
+    claimUrl: null,
+    claimError: null,
+    agent: "off",
+    agentError: null,
+    tunnels: [],
+    synced: true,
+    guest: true,
+    notices: [],
+  };
+  const playitUsers = new Set<string>();
+  const emitPlayit = () => emit({ type: "playit", data: structuredClone(playit) });
+  const setAgent = (agent: PlayitAgentState) => {
+    playit.agent = agent;
+    emitPlayit();
+  };
+  const acquireAgent = async (id: string) => {
+    playitUsers.add(id);
+    if (playit.agent !== "off" && playit.agent !== "error") return;
+    setAgent("downloading");
+    await wait(1200);
+    setAgent("starting");
+    await wait(1000);
+    if (playitUsers.size > 0) setAgent("online");
+  };
+  const releaseAgent = (id: string) => {
+    playitUsers.delete(id);
+    if (playitUsers.size === 0) setAgent("off");
+  };
 
   [
     "Запуск Paper 26.3 (Java 25, память 4096 МБ, порт 25565)",
@@ -124,6 +159,7 @@ export function createMockApi(): HearthApi {
     await wait(900);
     line(id, "stdout", "[18:20:05 INFO]: Done (3.912s)! For help, type \"help\"");
     setStatus(id, { state: "running" });
+    if (s.meta.playit) void acquireAgent(id);
   };
 
   const versions: GameVersion[] = [
@@ -167,9 +203,12 @@ export function createMockApi(): HearthApi {
       if (patch.memoryMb) s.meta.memoryMb = patch.memoryMb;
       return { ...s.meta };
     },
-    deleteServer: async (id) => {
+    deleteServer: async (id, deleteTunnel) => {
+      const tunnelId = servers.get(id)?.meta.playit?.tunnelId;
+      if (deleteTunnel && tunnelId) playit.tunnels = playit.tunnels.filter((t) => t.id !== tunnelId);
       servers.delete(id);
       consoles.delete(id);
+      releaseAgent(id);
     },
     installServer: async (id) => summary(id).meta,
     start: async (id) => {
@@ -185,6 +224,7 @@ export function createMockApi(): HearthApi {
       await wait(900);
       line(id, "system", "Сервер остановлен");
       setStatus(id, { state: "stopped" });
+      releaseAgent(id);
     },
     kill: async (id) => {
       line(id, "system", "Принудительное завершение сервера");
@@ -213,6 +253,62 @@ export function createMockApi(): HearthApi {
       }
     },
     openFolder: async () => {},
+
+    playitStatus: async () => structuredClone(playit),
+    playitStartClaim: async () => {
+      if (!playit.claimUrl) {
+        playit.claimUrl = "https://playit.gg/claim/0a1b2c3d4e";
+        playit.claimError = null;
+        emitPlayit();
+        // Будто пользователь вошёл в playit и подтвердил подключение.
+        setTimeout(() => {
+          if (!playit.claimUrl) return;
+          playit.claimUrl = null;
+          playit.linked = true;
+          emitPlayit();
+        }, 5000);
+      }
+      return playit.claimUrl;
+    },
+    playitCancelClaim: async () => {
+      playit.claimUrl = null;
+      emitPlayit();
+    },
+    playitUnlink: async () => {
+      playitUsers.clear();
+      playit.linked = false;
+      playit.agent = "off";
+      emitPlayit();
+    },
+    playitRetry: async () => {},
+    playitDashboardUrl: async () => "https://playit.gg/account/tunnels",
+    enableFriendAccess: async (id) => {
+      const s = servers.get(id)!;
+      if (!playit.linked) throw { kind: "playitNotLinked", message: "Сначала подключите playit.gg" };
+      await wait(800);
+      const tunnelId = `tun-${Math.random().toString(16).slice(2, 10)}`;
+      playit.tunnels.push({ id: tunnelId, address: null, pending: "Выделяю адрес", disabled: null });
+      s.meta.playit = { tunnelId, localPort: s.meta.port, createdAt: new Date().toISOString() };
+      emitPlayit();
+      setTimeout(() => {
+        const t = playit.tunnels.find((t) => t.id === tunnelId);
+        if (!t) return;
+        t.address = `${s.meta.id.split("-")[0]}-friends.gl.joinmc.link`;
+        t.pending = null;
+        emitPlayit();
+      }, 2500);
+      if (s.status.state === "running") void acquireAgent(id);
+      return { ...s.meta };
+    },
+    disableFriendAccess: async (id) => {
+      const s = servers.get(id)!;
+      await wait(500);
+      playit.tunnels = playit.tunnels.filter((t) => t.id !== s.meta.playit?.tunnelId);
+      s.meta.playit = null;
+      releaseAgent(id);
+      emitPlayit();
+      return { ...s.meta };
+    },
     stopAll: async () => {
       for (const [id, s] of servers) {
         if (s.status.state === "running" || s.status.state === "starting") {

@@ -14,6 +14,7 @@ use crate::process::ConsoleLine;
 use crate::providers::{self, GameVersion, Loader};
 use crate::servers::{self, CreateServerRequest, PropertyEntry, ServerMeta, ServerPatch};
 use crate::system::{self, NetworkInfo, SystemInfo};
+use crate::tunnel::PlayitStatus;
 
 pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
@@ -39,7 +40,62 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         get_properties,
         set_properties,
         open_server_folder,
+        get_playit_status,
+        playit_start_claim,
+        playit_cancel_claim,
+        playit_unlink,
+        playit_retry,
+        playit_dashboard_url,
+        enable_friend_access,
+        disable_friend_access,
     ]
+}
+
+#[tauri::command]
+async fn get_playit_status(state: State<'_, AppState>) -> Result<PlayitStatus> {
+    Ok(state.manager.playit().status_fresh().await)
+}
+
+/// Начинает подключение к playit.gg. Возвращает ссылку для браузера.
+/// `async`: команда запускает фоновую задачу, а синхронные команды Tauri
+/// выполняются вне среды tokio.
+#[tauri::command]
+async fn playit_start_claim(state: State<'_, AppState>) -> Result<String> {
+    state.manager.playit().start_claim()
+}
+
+#[tauri::command]
+fn playit_cancel_claim(state: State<'_, AppState>) {
+    state.manager.playit().cancel_claim();
+}
+
+#[tauri::command]
+async fn playit_unlink(state: State<'_, AppState>) -> Result<()> {
+    state.manager.playit().unlink().await
+}
+
+#[tauri::command]
+async fn playit_retry(state: State<'_, AppState>) -> Result<()> {
+    state.manager.playit().retry().await
+}
+
+#[tauri::command]
+async fn playit_dashboard_url(state: State<'_, AppState>) -> Result<String> {
+    Ok(state.manager.playit().dashboard_url().await)
+}
+
+#[tauri::command]
+async fn enable_friend_access(state: State<'_, AppState>, id: String) -> Result<ServerMeta> {
+    state
+        .manager
+        .enable_friend_access(&id)
+        .await
+        .inspect_err(|e| tracing::warn!("Доступ для друзей сервера {id} не включился: {e:?}"))
+}
+
+#[tauri::command]
+async fn disable_friend_access(state: State<'_, AppState>, id: String) -> Result<ServerMeta> {
+    state.manager.disable_friend_access(&id).await
 }
 
 #[tauri::command]
@@ -107,8 +163,8 @@ async fn update_server(state: State<'_, AppState>, id: String, patch: ServerPatc
 }
 
 #[tauri::command]
-async fn delete_server(state: State<'_, AppState>, id: String) -> Result<()> {
-    state.manager.delete(&id).await
+async fn delete_server(state: State<'_, AppState>, id: String, delete_tunnel: Option<bool>) -> Result<()> {
+    state.manager.delete(&id, delete_tunnel.unwrap_or(true)).await
 }
 
 #[tauri::command]

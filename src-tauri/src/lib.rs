@@ -14,6 +14,7 @@ pub mod process;
 pub mod providers;
 pub mod servers;
 pub mod system;
+pub mod tunnel;
 
 mod app;
 
