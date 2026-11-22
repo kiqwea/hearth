@@ -286,3 +286,97 @@ async fn live_paper() {
 async fn live_fabric() {
     run_server(Loader::Fabric).await;
 }
+
+/// Статистика и управление игроками на настоящем сервере (через RCON).
+async fn run_players(loader: Loader) {
+    let shared = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("hearth-live");
+    let servers = tempfile::tempdir().unwrap();
+    let paths = Paths::new(shared.join("config"), shared.join("data"));
+    let http = Http::new(paths.cache_dir()).unwrap();
+    let manager = test_manager(&paths, &http, servers.path(), Arc::new(PrintSink::default()));
+    let version = providers::list_versions(&http, loader, false).await.unwrap()[0].id.clone();
+    let id = manager
+        .create(CreateServerRequest {
+            name: format!("Игроки {loader:?}"),
+            loader,
+            game_version: version.clone(),
+            memory_mb: 2048,
+            port: Some(free_port()),
+            game_mode: GameMode::Creative,
+            difficulty: Difficulty::Peaceful,
+            max_players: 7,
+            seed: None,
+            eula_accepted: true,
+            pirate_mode: false,
+            nick_protection: false,
+        })
+        .await
+        .unwrap()
+        .id;
+    manager.start(&id).await.unwrap();
+    wait_running(&manager, &id).await;
+
+    // Статистика: память, процессор, слоты и TPS приходят в течение пары опросов.
+    let started = Instant::now();
+    let stats = loop {
+        let s = manager.get(&id).unwrap().stats;
+        if let Some(s) = s.filter(|s| s.max_players.is_some() && s.tps.is_some()) {
+            break s;
+        }
+        if started.elapsed() > Duration::from_secs(30) {
+            let props = std::fs::read_to_string(manager.store().game_dir(&id).join("server.properties")).unwrap();
+            for line in props.lines().filter(|l| l.contains("permission") || l.contains("rcon") || l.contains("op-")) {
+                println!("== prop {line}");
+            }
+            for cmd in ["list", "help", "minecraft:list", "minecraft:tick query", "tps"] {
+                println!("== RCON {cmd:?} → {:?}", manager.rcon(&id, cmd).await);
+            }
+            panic!("статистика не пришла: {:?}", manager.get(&id).unwrap().stats);
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    };
+    println!("== {loader:?} {version}: {stats:?}");
+    assert_eq!(stats.max_players, Some(7));
+    assert!(stats.online.is_empty());
+    assert!(stats.memory_mb.unwrap_or(0) > 100, "память процесса посчитана");
+    let tps = stats.tps.unwrap();
+    assert!((1.0..=20.0).contains(&tps), "TPS разобран: {tps}");
+
+    // Белый список, оператор, бан и разбан через RCON.
+    use hearth_lib::players::PlayerAction::*;
+    for action in [WhitelistAdd, Op, Ban] {
+        let reply = manager.player_action(&id, action, "Notch", Some("тест")).await.unwrap();
+        println!("== {action:?}: {reply}");
+    }
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let notch = manager.players(&id).unwrap().into_iter().find(|p| p.name == "Notch").expect("Notch в списке игроков");
+    assert!(notch.whitelisted && notch.op && notch.banned, "{notch:?}");
+    assert_eq!(notch.ban_reason.as_deref(), Some("тест"));
+    manager.player_action(&id, Pardon, "Notch", None).await.unwrap();
+    manager.player_action(&id, Deop, "Notch", None).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let notch = manager.players(&id).unwrap().into_iter().find(|p| p.name == "Notch").unwrap();
+    assert!(!notch.banned && !notch.op && notch.whitelisted, "{notch:?}");
+    assert!(manager.player_action(&id, Kick, "bad name!", None).await.is_err(), "некорректный ник отклонён");
+
+    manager.stop(&id, STOP_TIMEOUT).await.unwrap();
+    assert!(manager.get(&id).unwrap().stats.is_none(), "статистика сброшена после остановки");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_players_paper() {
+    run_players(Loader::Paper).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_players_vanilla() {
+    run_players(Loader::Vanilla).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_players_fabric() {
+    run_players(Loader::Fabric).await;
+}

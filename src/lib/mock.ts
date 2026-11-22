@@ -6,6 +6,8 @@ import type { ConsoleStream } from "../bindings/ConsoleStream";
 import type { Event } from "../bindings/Event";
 import type { GameVersion } from "../bindings/GameVersion";
 import type { DirectInfo } from "../bindings/DirectInfo";
+import type { PlayerInfo } from "../bindings/PlayerInfo";
+import type { ServerStats } from "../bindings/ServerStats";
 import type { InstallProgress } from "../bindings/InstallProgress";
 import type { PlayitAgentState } from "../bindings/PlayitAgentState";
 import type { PlayitStatus } from "../bindings/PlayitStatus";
@@ -223,10 +225,41 @@ export function createMockApi(): HearthApi {
     { id: "1.20.6", stable: true, releaseTime: null },
   ];
 
+  // Игроки и статистика: у «Выживания» двое онлайн и немного истории.
+  const roster = new Map<string, PlayerInfo[]>([
+    [
+      "survival-a1b2c3",
+      [
+        { name: "Sanya2010", online: true, op: false, whitelisted: false, banned: false, banReason: null },
+        { name: "lenka_mur", online: true, op: false, whitelisted: false, banned: false, banReason: null },
+        { name: "Dima_K", online: false, op: true, whitelisted: false, banned: false, banReason: null },
+        { name: "Griefer228", online: false, op: false, whitelisted: false, banned: true, banReason: "Сломал базу" },
+      ],
+    ],
+  ]);
+  const statsFor = (id: string): ServerStats | null => {
+    const s = servers.get(id)!;
+    if (s.status.state !== "running") return null;
+    const online = (roster.get(id) ?? []).filter((p) => p.online).map((p) => p.name);
+    return {
+      memoryMb: Math.round(s.meta.memoryMb * 0.62 + Math.random() * 120),
+      cpuPercent: 6 + Math.random() * 8,
+      tps: 19.6 + Math.random() * 0.4,
+      online,
+      maxPlayers: 10,
+    };
+  };
+  setInterval(() => {
+    for (const id of servers.keys()) {
+      const stats = statsFor(id);
+      if (stats) emit({ type: "stats", data: { serverId: id, stats } });
+    }
+  }, 5000);
+
   const summary = (id: string) => {
     const s = servers.get(id);
     if (!s) throw { kind: "serverNotFound", message: "Сервер не найден" };
-    return { meta: { ...s.meta }, status: s.status, direct: s.direct ?? null };
+    return { meta: { ...s.meta }, status: s.status, direct: s.direct ?? null, stats: statsFor(id) };
   };
 
   return {
@@ -319,6 +352,47 @@ export function createMockApi(): HearthApi {
       }
     },
     openFolder: async () => {},
+
+    getPlayers: async (id) => structuredClone(roster.get(id) ?? []),
+    playerAction: async (id, action, name, reason) => {
+      if (servers.get(id)!.status.state !== "running") {
+        throw { kind: "invalidInput", message: "Запустите сервер, чтобы управлять игроками" };
+      }
+      await wait(300);
+      const list = roster.get(id) ?? [];
+      roster.set(id, list);
+      let p = list.find((x) => x.name.toLowerCase() === name.toLowerCase());
+      if (!p) {
+        p = { name, online: false, op: false, whitelisted: false, banned: false, banReason: null };
+        list.push(p);
+      }
+      switch (action) {
+        case "kick":
+          p.online = false;
+          return `Kicked ${name}: ${reason ?? "Kicked by an operator"}`;
+        case "ban":
+          p.online = false;
+          p.banned = true;
+          p.banReason = reason;
+          return `Banned ${name}: ${reason ?? "Banned by an operator."}`;
+        case "pardon":
+          p.banned = false;
+          p.banReason = null;
+          return `Unbanned ${name}`;
+        case "op":
+          p.op = true;
+          return `Made ${name} a server operator`;
+        case "deop":
+          p.op = false;
+          return `Made ${name} no longer a server operator`;
+        case "whitelistAdd":
+          p.whitelisted = true;
+          return `Added ${name} to the whitelist`;
+        case "whitelistRemove":
+          p.whitelisted = false;
+          return `Removed ${name} from the whitelist`;
+      }
+    },
 
     playitStatus: async () => structuredClone(playit),
     playitStartClaim: async () => {

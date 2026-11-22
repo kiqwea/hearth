@@ -9,6 +9,7 @@ import { formatGb, formatUptime, serverTitle, statusText, statusTone } from "../
 import { useHearth, type ServerTab } from "../../lib/store";
 import { ConsoleTab } from "./ConsoleTab";
 import { Overview } from "./Overview";
+import { PlayersTab } from "./PlayersTab";
 import { SettingsTab } from "./SettingsTab";
 
 export function ServerView({ id, tab }: { id: string; tab: ServerTab }) {
@@ -27,7 +28,7 @@ export function ServerView({ id, tab }: { id: string; tab: ServerTab }) {
   const tabs: Array<{ key: ServerTab | null; label: string }> = [
     { key: "overview", label: t.tabs.overview },
     { key: "console", label: t.tabs.console },
-    { key: null, label: t.tabs.players },
+    { key: "players", label: t.tabs.players },
     { key: "settings", label: t.tabs.settings },
     ...(extensions ? [{ key: null, label: extensions }] : []),
     { key: null, label: t.tabs.backups },
@@ -62,6 +63,7 @@ export function ServerView({ id, tab }: { id: string; tab: ServerTab }) {
 
       {tab === "overview" && <Overview server={server} />}
       {tab === "console" && <ConsoleTab id={id} />}
+      {tab === "players" && <PlayersTab server={server} />}
       {tab === "settings" && <SettingsTab server={server} />}
     </div>
   );

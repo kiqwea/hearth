@@ -14,6 +14,7 @@ use crate::process::ConsoleLine;
 use crate::providers::{self, GameVersion, Loader};
 use crate::servers::{self, CreateServerRequest, PropertyEntry, ServerMeta, ServerPatch};
 use crate::system::{self, NetworkInfo, SystemInfo};
+use crate::players::{PlayerAction, PlayerInfo};
 use crate::tunnel::PlayitStatus;
 
 pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
@@ -51,7 +52,26 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         try_direct_access,
         set_pirate_mode,
         set_nick_protection,
+        get_players,
+        player_action,
     ]
+}
+
+#[tauri::command]
+fn get_players(state: State<'_, AppState>, id: String) -> Result<Vec<PlayerInfo>> {
+    state.manager.players(&id)
+}
+
+/// Кик, бан, оператор, белый список. Возвращает ответ сервера.
+#[tauri::command]
+async fn player_action(
+    state: State<'_, AppState>,
+    id: String,
+    action: PlayerAction,
+    name: String,
+    reason: Option<String>,
+) -> Result<String> {
+    state.manager.player_action(&id, action, &name, reason.as_deref()).await
 }
 
 /// Вход с пиратских клиентов: бэкап, плагин авторизации, перенос вещей игроков.

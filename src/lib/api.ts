@@ -17,6 +17,8 @@ import type { InstalledJava } from "../bindings/InstalledJava";
 import type { Loader } from "../bindings/Loader";
 import type { NetworkInfo } from "../bindings/NetworkInfo";
 import type { PirateResult } from "../bindings/PirateResult";
+import type { PlayerAction } from "../bindings/PlayerAction";
+import type { PlayerInfo } from "../bindings/PlayerInfo";
 import type { PlayitStatus } from "../bindings/PlayitStatus";
 import type { PropertyEntry } from "../bindings/PropertyEntry";
 import type { ServerMeta } from "../bindings/ServerMeta";
@@ -81,6 +83,11 @@ export interface HearthApi {
   setPirateMode(id: string, enable: boolean, protect: boolean): Promise<PirateResult>;
   /** Защита ников паролем (AuthMe/EasyAuth) на сервере в пиратском режиме. */
   setNickProtection(id: string, on: boolean): Promise<ServerMeta>;
+
+  // Игроки
+  getPlayers(id: string): Promise<PlayerInfo[]>;
+  /** Кик, бан, оператор, белый список. Возвращает ответ сервера. */
+  playerAction(id: string, action: PlayerAction, name: string, reason: string | null): Promise<string>;
   disableFriendAccess(id: string): Promise<ServerMeta>;
 
   onEvent(handler: (event: Event) => void): Promise<() => void>;
@@ -159,6 +166,8 @@ const tauriApi: HearthApi = {
   tryDirectAccess: (id) => invoke("try_direct_access", { id }),
   setPirateMode: (id, enable, protect) => invoke("set_pirate_mode", { id, enable, protect }),
   setNickProtection: (id, on) => invoke("set_nick_protection", { id, on }),
+  getPlayers: (id) => invoke("get_players", { id }),
+  playerAction: (id, action, name, reason) => invoke("player_action", { id, action, name, reason }),
   disableFriendAccess: (id) => invoke("disable_friend_access", { id }),
 
   onEvent: (handler) => listen<Event>("hearth://event", (e) => handler(e.payload)),

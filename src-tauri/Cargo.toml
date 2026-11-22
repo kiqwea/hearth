@@ -1,6 +1,6 @@
 [package]
 name = "hearth"
-version = "0.3.1"
+version = "0.4.0"
 description = "Hearth: локальные серверы Minecraft в пару кликов"
 authors = ["Hearth"]
 edition = "2024"

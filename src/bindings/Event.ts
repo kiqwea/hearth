@@ -3,6 +3,7 @@ import type { ConsoleEvent } from "./ConsoleEvent";
 import type { DirectEvent } from "./DirectEvent";
 import type { InstallEvent } from "./InstallEvent";
 import type { PlayitStatus } from "./PlayitStatus";
+import type { StatsEvent } from "./StatsEvent";
 import type { StatusEvent } from "./StatusEvent";
 
-export type Event = { "type": "console", "data": ConsoleEvent } | { "type": "status", "data": StatusEvent } | { "type": "install", "data": InstallEvent } | { "type": "playit", "data": PlayitStatus } | { "type": "direct", "data": DirectEvent };
+export type Event = { "type": "console", "data": ConsoleEvent } | { "type": "status", "data": StatusEvent } | { "type": "install", "data": InstallEvent } | { "type": "playit", "data": PlayitStatus } | { "type": "direct", "data": DirectEvent } | { "type": "stats", "data": StatsEvent };

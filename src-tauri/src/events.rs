@@ -31,6 +31,8 @@ pub enum Event {
     Playit(PlayitStatus),
     /// Изменилось прямое подключение сервера (проброс порта на роутере).
     Direct(crate::direct::DirectEvent),
+    /// Свежая статистика работающего сервера: память, процессор, TPS, игроки.
+    Stats(crate::players::StatsEvent),
 }
 
 #[derive(Serialize, Clone, Debug, TS)]

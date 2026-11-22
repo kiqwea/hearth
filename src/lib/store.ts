@@ -20,7 +20,7 @@ const CONSOLE_LIMIT = 5000;
 /** Как часто проверять обновления Hearth, пока приложение открыто. */
 const UPDATE_CHECK_INTERVAL = 6 * 60 * 60 * 1000;
 
-export type ServerTab = "overview" | "console" | "settings";
+export type ServerTab = "overview" | "console" | "players" | "settings";
 
 export type View =
   | { kind: "loading" }
@@ -332,6 +332,14 @@ function handleEvent(event: Event) {
     case "playit":
       onPlayit(event.data);
       break;
+    case "stats": {
+      const { serverId, stats } = event.data;
+      useHearth.setState((st) => {
+        const existing = st.servers[serverId];
+        return existing ? { servers: { ...st.servers, [serverId]: { ...existing, stats } } } : {};
+      });
+      break;
+    }
     case "direct": {
       const { serverId, info } = event.data;
       useHearth.setState((st) => {

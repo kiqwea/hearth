@@ -19,18 +19,36 @@ export function Overview({ server }: { server: ServerSummary }) {
     return () => clearInterval(timer);
   }, []);
 
-  const tiles = [
+  // Статистика приходит раз в несколько секунд, пока сервер работает.
+  const stats = status.state === "running" ? server.stats : null;
+  const tps = stats?.tps ?? null;
+  const tpsTone = tps === null ? "" : tps >= 19 ? "text-ok" : tps >= 15 ? "text-warn" : "text-err";
+  const tiles: Array<{ label: string; value: string; sub: string | null; tone?: string }> = [
     {
-      label: t.overview.core,
-      value: `${loaderName(meta.loader)} ${meta.gameVersion}`,
-      sub: meta.loader === "paper" && meta.loaderVersion ? t.overview.build(meta.loaderVersion) : meta.loaderVersion,
+      label: t.overview.players,
+      value: stats?.maxPlayers != null ? `${stats.online.length} / ${stats.maxPlayers}` : "—",
+      sub: stats ? (stats.online.length ? stats.online.join(", ") : t.overview.nobody) : null,
     },
-    { label: t.overview.java, value: meta.javaMajor !== null ? String(meta.javaMajor) : "—", sub: "Eclipse Temurin" },
-    { label: t.overview.memory, value: formatGb(meta.memoryMb), sub: t.overview.memoryAllocated },
+    {
+      label: t.overview.tps,
+      value: tps !== null ? tps.toFixed(1) : "—",
+      sub: tps === null ? (stats ? t.overview.tpsUnknown : null) : tps >= 19 ? t.overview.tpsOk : tps >= 15 ? t.overview.tpsLag : t.overview.tpsBad,
+      tone: tpsTone,
+    },
+    {
+      label: t.overview.cpu,
+      value: stats?.cpuPercent != null ? `${Math.round(stats.cpuPercent)}%` : "—",
+      sub: stats?.cpuPercent != null ? t.overview.cpuSub : null,
+    },
+    {
+      label: t.overview.memory,
+      value: stats?.memoryMb != null ? formatGb(stats.memoryMb) : formatGb(meta.memoryMb),
+      sub: stats?.memoryMb != null ? t.overview.memoryUsed(formatGb(meta.memoryMb)) : t.overview.memoryAllocated,
+    },
     {
       label: t.overview.uptime,
       value: status.state === "running" && since ? formatUptime(now - since) : t.overview.notRunning,
-      sub: null,
+      sub: `${loaderName(meta.loader)} ${meta.gameVersion}`,
     },
   ];
 
@@ -52,8 +70,8 @@ export function Overview({ server }: { server: ServerSummary }) {
         {tiles.map((tile) => (
           <div key={tile.label} className="bg-card border border-line rounded-[14px] px-[18px] py-4 flex flex-col gap-1.5">
             <span className="text-muted text-[13px]">{tile.label}</span>
-            <span className="text-[22px] font-bold leading-tight">{tile.value}</span>
-            {tile.sub && <span className="text-[13px] text-muted">{tile.sub}</span>}
+            <span className={`text-[22px] font-bold leading-tight ${tile.tone ?? ""}`}>{tile.value}</span>
+            {tile.sub && <span className="text-[13px] text-muted truncate" title={tile.sub}>{tile.sub}</span>}
           </div>
         ))}
       </section>

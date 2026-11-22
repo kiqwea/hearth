@@ -36,6 +36,8 @@ use uuid::Uuid;
 use crate::backups;
 use crate::direct::{DirectInfo, DirectManager, DirectState};
 use crate::pirate;
+use crate::players::{self, PlayerAction, PlayerInfo, ServerStats, StatsEvent};
+use crate::rcon::{self, Rcon};
 use crate::tunnel::api::PlayitApi;
 use crate::tunnel::secret::SecretStore;
 use crate::tunnel::PlayitManager;
@@ -51,6 +53,8 @@ pub struct ServerSummary {
     pub status: ServerStatus,
     /// Прямое подключение (если включено и Hearth уже что-то о нём знает).
     pub direct: Option<DirectInfo>,
+    /// Память, процессор, TPS и игроки онлайн (пока сервер работает).
+    pub stats: Option<ServerStats>,
 }
 
 /// Итог переключения пиратского режима.
@@ -86,6 +90,14 @@ struct RunningServer {
     stop_requested: AtomicBool,
     exited: watch::Receiver<bool>,
     port: u16,
+    pid: Option<u32>,
+    /// Служебный канал (RCON): порт и пароль этого запуска, соединение создаётся по требованию.
+    rcon_port: u16,
+    rcon_password: String,
+    rcon: tokio::sync::Mutex<Option<Rcon>>,
+    /// Разбудить сбор статистики раньше срока (игрок зашёл или вышел, выполнена команда).
+    stats_wake: tokio::sync::Notify,
+    is_paper: bool,
 }
 
 #[derive(Default)]
@@ -95,7 +107,12 @@ struct Inner {
     busy: HashSet<String>,
     statuses: HashMap<String, ServerStatus>,
     consoles: HashMap<String, ConsoleBuffer>,
+    /// Последняя статистика запущенных серверов.
+    stats: HashMap<String, ServerStats>,
 }
+
+/// Как часто обновлять статистику работающего сервера.
+const STATS_EVERY: Duration = Duration::from_secs(5);
 
 pub struct ServerManager {
     http: Http,
@@ -284,6 +301,7 @@ impl ServerManager {
         ServerSummary {
             status: self.status(&meta.id),
             direct: self.direct.info(&meta.id),
+            stats: self.lock().stats.get(&meta.id).cloned(),
             meta,
         }
     }
@@ -786,14 +804,24 @@ impl ServerManager {
             .ok_or_else(|| Error::other("Не удалось определить файл сервера"))?;
 
         // Источник правды для порта — server.properties: его могли поправить вручную.
-        let port = store
-            .read_properties(id)?
+        let mut props = store.read_properties(id)?;
+        let port = props
             .get("server-port")
             .and_then(|p| p.trim().parse::<u16>().ok())
             .unwrap_or(meta.port);
         if self.lock().running.values().any(|r| r.port == port) || !port_is_free(port) {
             return Err(Error::PortBusy(port));
         }
+
+        // Служебный канал для списка игроков, TPS и команд из вкладки «Игроки»:
+        // новый случайный порт и пароль при каждом запуске.
+        let rcon_port = rcon::free_port().filter(|p| *p != port).unwrap_or(port.wrapping_add(10));
+        let rcon_password = rcon::random_password();
+        props.set("enable-rcon", "true");
+        props.set("rcon.port", &rcon_port.to_string());
+        props.set("rcon.password", &rcon_password);
+        props.set("broadcast-rcon-to-ops", "false");
+        store.write_properties(id, &props).await?;
 
         servers::write_eula(&game_dir, accepted_at).await?;
         // AuthMe создаёт config.yml при первом запуске: со второго запуска он говорит по-русски.
@@ -860,8 +888,15 @@ impl ServerManager {
             stop_requested: AtomicBool::new(false),
             exited: exit_rx,
             port,
+            pid: child.id(),
+            rcon_port,
+            rcon_password,
+            rcon: tokio::sync::Mutex::new(None),
+            stats_wake: tokio::sync::Notify::new(),
+            is_paper: meta.loader == providers::Loader::Paper,
         });
         self.lock().running.insert(id.to_string(), running.clone());
+        self.spawn_stats(id, running.clone());
 
         let out_task = self.spawn_reader(id, stdout, ConsoleStream::Stdout);
         let err_task = self.spawn_reader(id, stderr, ConsoleStream::Stderr);
@@ -892,7 +927,11 @@ impl ServerManager {
 
             let code = exit.ok().and_then(|s| s.code());
             let requested = running.stop_requested.load(Ordering::SeqCst);
-            this.lock().running.remove(&id);
+            {
+                let mut inner = this.lock();
+                inner.running.remove(&id);
+                inner.stats.remove(&id);
+            }
             let (status, message) = if requested || code == Some(0) {
                 (ServerStatus::Stopped, "Сервер остановлен".to_string())
             } else {
@@ -938,6 +977,12 @@ impl ServerManager {
     fn on_output(&self, id: &str, stream: ConsoleStream, text: String) {
         let ready = process::is_ready_line(&text);
         let hint = process::hint_for_line(&text);
+        // Игрок зашёл или вышел: обновить список онлайн сразу, а не через 5 секунд.
+        if text.contains(" joined the game") || text.contains(" left the game") {
+            if let Some(running) = self.running(id) {
+                running.stats_wake.notify_one();
+            }
+        }
         self.push_line(id, stream, text);
         if let Some(hint) = hint {
             self.push_line(id, ConsoleStream::System, hint.to_string());
@@ -945,6 +990,124 @@ impl ServerManager {
         if ready && self.status(id) == ServerStatus::Starting {
             self.set_status(id, ServerStatus::Running);
         }
+    }
+
+    // ---- игроки и статистика ----
+
+    /// Команда через служебный канал (RCON). Соединение открывается при первой
+    /// команде и переоткрывается, если оборвалось.
+    async fn rcon_command(running: &RunningServer, command: &str) -> Result<String> {
+        let mut guard = running.rcon.lock().await;
+        for attempt in 0..2 {
+            if guard.is_none() {
+                *guard = Some(Rcon::connect(running.rcon_port, &running.rcon_password).await?);
+            }
+            match guard.as_mut().expect("connected").command(command).await {
+                Ok(reply) => return Ok(reply),
+                Err(e) if attempt == 0 => {
+                    tracing::debug!("RCON оборвался ({e}), переподключаюсь");
+                    *guard = None;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        unreachable!("цикл возвращает результат на второй попытке")
+    }
+
+    /// Раз в несколько секунд: память и процессор процесса, игроки онлайн, TPS.
+    fn spawn_stats(self: &Arc<Self>, id: &str, running: Arc<RunningServer>) {
+        let this = self.clone();
+        let id = id.to_string();
+        tokio::spawn(async move {
+            let mut exited = running.exited.clone();
+            let mut sys = sysinfo::System::new().ok();
+            let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) as f32;
+            let mut tps_supported = true;
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(STATS_EVERY) => {}
+                    _ = running.stats_wake.notified() => {
+                        // Дать серверу дописать списки (например, ops.json) перед опросом.
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                    }
+                    _ = exited.changed() => break,
+                }
+                if *exited.borrow() {
+                    break;
+                }
+                let mut stats = this.lock().stats.get(&id).cloned().unwrap_or_default();
+                if let (Some(sys), Some(pid)) = (sys.as_mut(), running.pid) {
+                    let pid = sysinfo::Pid::from_u32(pid);
+                    sys.refresh_processes_specifics(
+                        sysinfo::ProcessesToUpdate::Some(&[pid]),
+                        true,
+                        sysinfo::ProcessRefreshKind::nothing().with_memory().with_cpu(),
+                    );
+                    if let Some(p) = sys.process(pid) {
+                        stats.memory_mb = Some((p.memory() / 1024 / 1024) as u32);
+                        stats.cpu_percent = Some((p.cpu_usage() / cpus).clamp(0.0, 100.0));
+                    }
+                }
+                // Игроки и TPS доступны только когда сервер уже полностью запустился.
+                if this.status(&id) == ServerStatus::Running {
+                    let prefix = players::command_prefix(running.is_paper);
+                    if let Ok(reply) = Self::rcon_command(&running, &format!("{prefix}list")).await {
+                        if let Some((online, max)) = players::parse_list(&reply) {
+                            stats.online = online;
+                            stats.max_players = Some(max);
+                        }
+                    }
+                    if tps_supported {
+                        let (cmd, parse): (&str, fn(&str) -> Option<f32>) = if running.is_paper {
+                            ("tps", players::parse_paper_tps)
+                        } else {
+                            ("tick query", players::parse_tick_query)
+                        };
+                        match Self::rcon_command(&running, cmd).await.map(|r| parse(&r)) {
+                            Ok(Some(tps)) => stats.tps = Some((tps * 10.0).round() / 10.0),
+                            // Старая версия игры без такой команды: больше не спрашиваем.
+                            Ok(None) => tps_supported = false,
+                            Err(_) => {}
+                        }
+                    }
+                }
+                if this.running(&id).is_none() {
+                    break;
+                }
+                this.lock().stats.insert(id.clone(), stats.clone());
+                this.sink.emit(Event::Stats(StatsEvent {
+                    server_id: id.clone(),
+                    stats,
+                }));
+            }
+        });
+    }
+
+    /// Служебная команда запущенному серверу; ответ не попадает в консоль.
+    pub async fn rcon(&self, id: &str, command: &str) -> Result<String> {
+        let running = self.running(id).ok_or(Error::NotRunning)?;
+        Self::rcon_command(&running, command).await
+    }
+
+    /// Игроки сервера: кто онлайн, операторы, белый список, баны.
+    pub fn players(&self, id: &str) -> Result<Vec<PlayerInfo>> {
+        servers::validate_id(id)?;
+        let online = self.lock().stats.get(id).map(|s| s.online.clone()).unwrap_or_default();
+        Ok(players::read_players(&self.store().game_dir(id), &online))
+    }
+
+    /// Кик, бан, оператор, белый список. Нужен запущенный сервер: изменения
+    /// делает сам Minecraft, он же сохраняет списки в файлы.
+    pub async fn player_action(&self, id: &str, action: PlayerAction, name: &str, reason: Option<&str>) -> Result<String> {
+        let running = self.running(id).ok_or_else(|| Error::invalid("Запустите сервер, чтобы управлять игроками"))?;
+        let command = players::action_command(action, name, reason, players::command_prefix(running.is_paper))?;
+        if self.status(id) != ServerStatus::Running {
+            return Err(Error::invalid("Подождите, пока сервер запустится"));
+        }
+        let reply = Self::rcon_command(&running, &command).await?;
+        tracing::info!("Игроки сервера {id}: {command} → {reply}");
+        running.stats_wake.notify_one();
+        Ok(reply)
     }
 
     /// Отправляет `stop` и ждёт, пока сервер сохранит мир и завершится.
