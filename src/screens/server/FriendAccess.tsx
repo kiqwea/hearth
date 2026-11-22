@@ -1,13 +1,11 @@
-// «Для друзей через интернет»: постоянный адрес сервера через playit.gg.
-//
-// Состояния: playit не подключён → подтверждение в браузере → адрес создаётся →
-// адрес есть (работает, когда сервер запущен и агент playit на связи).
+// «Для друзей через интернет». Кнопки «включить» нет: при запуске сервера Hearth
+// сам пробует прямое подключение (порт на роутере), иначе playit.gg. Вмешательство
+// нужно, только если playit ещё не подключён: войти в аккаунт может лишь пользователь.
 
-import { useState } from "react";
 import { Copy, ExternalLink, Globe } from "lucide-react";
 
 import type { ServerSummary } from "../../bindings/ServerSummary";
-import { Button, Dialog, IconButton, Spinner, StatusDot } from "../../components/ui";
+import { Button, IconButton, Spinner, StatusDot } from "../../components/ui";
 import { t } from "../../i18n";
 import { api, openExternal } from "../../lib/api";
 import { copyText, isActive, type Tone } from "../../lib/format";
@@ -17,16 +15,12 @@ export function FriendAccess({ server }: { server: ServerSummary }) {
   const { meta, status } = server;
   const playit = useHearth((s) => s.playit);
   const busy = useHearth((s) => !!s.accessBusy[meta.id]);
-  const trying = useHearth((s) => !!s.directTrying[meta.id]);
-  const directReason = useHearth((s) => s.directReason[meta.id]);
   const switchToPlayit = useHearth((s) => s.switchToPlayit);
   const connect = useHearth((s) => s.connectFriendAccess);
   const enable = useHearth((s) => s.enableFriendAccess);
-  const disable = useHearth((s) => s.disableFriendAccess);
   const cancelClaim = useHearth((s) => s.cancelPlayitClaim);
   const toast = useHearth((s) => s.toast);
   const toastError = useHearth((s) => s.toastError);
-  const [confirmDisable, setConfirmDisable] = useState(false);
 
   const tunnel = meta.playit;
   const info = tunnel ? playit?.tunnels.find((x) => x.id === tunnel.tunnelId) : undefined;
@@ -40,10 +34,6 @@ export function FriendAccess({ server }: { server: ServerSummary }) {
       toastError(e);
     }
   };
-
-  const reasonLine = directReason && !tunnel && (
-    <span className="text-[13px] text-muted">{t.access.directFailed(directReason)}</span>
-  );
 
   let body;
   if (meta.directAccess) {
@@ -64,12 +54,7 @@ export function FriendAccess({ server }: { server: ServerSummary }) {
     }
     body = (
       <div className="flex flex-col gap-2.5">
-        <AddressRow
-          address={address}
-          placeholder={t.access.directNoAddress}
-          busy={busy}
-          onDisable={() => setConfirmDisable(true)}
-        />
+        <AddressRow address={address} placeholder={t.access.directNoAddress} />
         <span className="flex flex-wrap items-center gap-2 text-[13px] text-soft" role="status">
           <StatusDot tone={tone} />
           <span className={tone === "err" ? "text-err" : undefined}>{line}</span>
@@ -93,7 +78,6 @@ export function FriendAccess({ server }: { server: ServerSummary }) {
   } else if (claimUrl) {
     body = (
       <div className="flex flex-col gap-3">
-        {reasonLine}
         <div className="flex items-start gap-3">
           <Spinner className="!w-5 !h-5 !border-2 mt-0.5" />
           <span className="flex flex-col gap-1">
@@ -122,32 +106,33 @@ export function FriendAccess({ server }: { server: ServerSummary }) {
         </div>
       </div>
     );
-  } else if (!tunnel || !linked) {
+  } else if (tunnel && !linked) {
+    // Адрес playit был, но Hearth отключили от playit.
     body = (
       <div className="flex flex-col gap-3">
-        <span className="text-soft leading-relaxed">
-          {tunnel && !linked ? t.playitSettings.notLinked : t.access.intro}
-        </span>
-        {reasonLine}
-        {playit?.claimError && (
-          <span role="alert" className="text-err text-[13px]">
-            {playit.claimError}
-          </span>
-        )}
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            variant="primary"
-            size="sm"
-            disabled={busy || trying}
-            onClick={() => void connect(meta.id, { skipDirect: !!tunnel || !!directReason })}
-          >
-            {(busy || trying) && <Spinner className="!w-4 !h-4 !border-2" />}
-            {trying ? t.access.tryingDirect : busy ? t.access.enabling : t.access.enable}
-          </Button>
-          {!linked && <span className="text-[13px] text-muted">{t.access.firstTime}</span>}
-        </div>
+        <span className="text-soft leading-relaxed">{t.playitSettings.notLinked}</span>
+        <PlayitLogin onLogin={() => void connect(meta.id, { skipDirect: true })} error={playit?.claimError ?? null} />
       </div>
     );
+  } else if (!tunnel) {
+    // Доступ ещё не настроен: Hearth делает это сам при запуске сервера.
+    const direct = server.direct;
+    const failed = direct?.state === "failed";
+    if (busy || (failed && linked && isActive(status))) {
+      body = <Progress text={t.access.enabling} />;
+    } else if (!isActive(status)) {
+      body = <span className="text-soft leading-relaxed">{t.access.autoStopped}</span>;
+    } else if (failed) {
+      body = (
+        <div className="flex flex-col gap-3">
+          <span className="text-[13px] text-muted">{t.access.directFailed(direct?.error ?? t.errors.generic)}</span>
+          <span className="text-soft leading-relaxed">{t.access.needPlayit}</span>
+          <PlayitLogin onLogin={() => void connect(meta.id, { skipDirect: true })} error={playit?.claimError ?? null} />
+        </div>
+      );
+    } else {
+      body = <Progress text={t.access.autoSetting} />;
+    }
   } else {
     const missing = playit?.synced && !info;
     const address = info?.address ?? null;
@@ -181,7 +166,7 @@ export function FriendAccess({ server }: { server: ServerSummary }) {
 
     body = (
       <div className="flex flex-col gap-2.5">
-        <AddressRow address={address} busy={busy} onDisable={() => setConfirmDisable(true)} />
+        <AddressRow address={address} />
         <span className="flex items-center gap-2 text-[13px] text-soft" role="status">
           <StatusDot tone={tone} />
           <span className={tone === "err" ? "text-err" : undefined}>{line}</span>
@@ -229,45 +214,41 @@ export function FriendAccess({ server }: { server: ServerSummary }) {
         <span className="text-xs text-muted">{t.access.title}</span>
         {body}
       </div>
-      <Dialog
-        open={confirmDisable}
-        onClose={() => setConfirmDisable(false)}
-        title={t.access.disableTitle}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setConfirmDisable(false)}>
-              {t.actions.cancel}
-            </Button>
-            <Button
-              variant="danger"
-              onClick={() => {
-                setConfirmDisable(false);
-                void disable(meta.id);
-              }}
-            >
-              {t.access.disable}
-            </Button>
-          </>
-        }
-      >
-        <p className="m-0">{meta.directAccess ? t.access.disableDirectText : t.access.disableText}</p>
-      </Dialog>
     </div>
   );
 }
 
-/** Адрес крупно, кнопка «Копировать» и «Отключить». */
-function AddressRow({
-  address,
-  placeholder = t.access.addressPending,
-  busy,
-  onDisable,
-}: {
-  address: string | null;
-  placeholder?: string;
-  busy: boolean;
-  onDisable: () => void;
-}) {
+function Progress({ text }: { text: string }) {
+  return (
+    <span className="flex items-center gap-2.5 text-soft">
+      <Spinner className="!w-4 !h-4 !border-2" />
+      {text}
+    </span>
+  );
+}
+
+/** Единственная кнопка, без которой не обойтись: войти в playit может только сам пользователь. */
+function PlayitLogin({ onLogin, error }: { onLogin: () => void; error: string | null }) {
+  return (
+    <>
+      {error && (
+        <span role="alert" className="text-err text-[13px]">
+          {error}
+        </span>
+      )}
+      <div className="flex flex-wrap items-center gap-3">
+        <Button variant="primary" size="sm" onClick={onLogin}>
+          <ExternalLink size={14} aria-hidden="true" />
+          {t.access.loginPlayit}
+        </Button>
+        <span className="text-[13px] text-muted">{t.access.loginOnce}</span>
+      </div>
+    </>
+  );
+}
+
+/** Адрес крупно и кнопка «Копировать». */
+function AddressRow({ address, placeholder = t.access.addressPending }: { address: string | null; placeholder?: string }) {
   const toast = useHearth((s) => s.toast);
   return (
     <div className="flex items-center gap-2.5 flex-wrap">
@@ -286,9 +267,6 @@ function AddressRow({
           <Copy size={16} aria-hidden="true" />
         </IconButton>
       )}
-      <Button size="sm" variant="ghost" disabled={busy} onClick={onDisable}>
-        {t.access.disable}
-      </Button>
     </div>
   );
 }

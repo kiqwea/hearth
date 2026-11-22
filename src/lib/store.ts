@@ -338,6 +338,13 @@ function handleEvent(event: Event) {
         const existing = st.servers[serverId];
         return existing ? { servers: { ...st.servers, [serverId]: { ...existing, direct: info } } } : {};
       });
+      // Ядро могло само включить доступ (прямой или через playit): перечитываем сервер.
+      if (info.state !== "opening") {
+        void api.getServer(serverId).then(
+          (s) => useHearth.setState((st) => ({ servers: { ...st.servers, [serverId]: s } })),
+          () => {},
+        );
+      }
       break;
     }
   }
@@ -351,8 +358,11 @@ function setMeta(meta: ServerSummary["meta"]) {
 }
 
 function onPlayit(playit: PlayitStatus) {
-  const { pendingAccess, enableFriendAccess } = useHearth.getState();
+  const { pendingAccess, enableFriendAccess, servers, refreshServers } = useHearth.getState();
   useHearth.setState({ playit });
+  // Ядро само создаёт туннели запущенным серверам: если появился неизвестный туннель, перечитываем серверы.
+  const known = new Set(Object.values(servers).map((s) => s.meta.playit?.tunnelId));
+  if (playit.tunnels.some((tun) => !known.has(tun.id))) void refreshServers();
   if (!pendingAccess) return;
   if (playit.linked) {
     // Пользователь подтвердил подключение в браузере: сразу создаём адрес.

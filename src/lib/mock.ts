@@ -120,6 +120,23 @@ export function createMockApi(): HearthApi {
     await wait(1000);
     if (playitUsers.size > 0) setAgent("online");
   };
+  const createTunnel = async (id: string): Promise<ServerMeta> => {
+    const s = servers.get(id)!;
+    await wait(800);
+    const tunnelId = `tun-${Math.random().toString(16).slice(2, 10)}`;
+    playit.tunnels.push({ id: tunnelId, address: null, pending: "Выделяю адрес", disabled: null });
+    s.meta.playit = { tunnelId, localPort: s.meta.port, createdAt: new Date().toISOString() };
+    emitPlayit();
+    setTimeout(() => {
+      const t = playit.tunnels.find((t) => t.id === tunnelId);
+      if (!t) return;
+      t.address = `${s.meta.id.split("-")[0]}-friends.gl.joinmc.link`;
+      t.pending = null;
+      emitPlayit();
+    }, 2500);
+    if (s.status.state === "running") void acquireAgent(id);
+    return { ...s.meta };
+  };
   const releaseAgent = (id: string) => {
     playitUsers.delete(id);
     if (playitUsers.size === 0) setAgent("off");
@@ -175,6 +192,21 @@ export function createMockApi(): HearthApi {
       setDirect(id, { state: "opening", address: s.direct?.address ?? null, error: null });
       await wait(1200);
       setDirect(id, { state: "open", address: "92.208.220.160", error: null });
+    } else if (!s.meta.playit) {
+      // Как в ядре: доступ для друзей настраивается сам при запуске.
+      setDirect(id, { state: "opening", address: null, error: null });
+      await wait(1500);
+      if (directWorks(id)) {
+        s.meta.directAccess = true;
+        setDirect(id, { state: "open", address: "92.208.220.160", error: null });
+      } else {
+        setDirect(id, {
+          state: "failed",
+          address: null,
+          error: "роутер не разрешает автоматически открыть порт (UPnP выключен или не поддерживается)",
+        });
+        if (playit.linked) await createTunnel(id);
+      }
     }
   };
 
@@ -301,22 +333,8 @@ export function createMockApi(): HearthApi {
     playitRetry: async () => {},
     playitDashboardUrl: async () => "https://playit.gg/account/tunnels",
     enableFriendAccess: async (id) => {
-      const s = servers.get(id)!;
       if (!playit.linked) throw { kind: "playitNotLinked", message: "Сначала подключите playit.gg" };
-      await wait(800);
-      const tunnelId = `tun-${Math.random().toString(16).slice(2, 10)}`;
-      playit.tunnels.push({ id: tunnelId, address: null, pending: "Выделяю адрес", disabled: null });
-      s.meta.playit = { tunnelId, localPort: s.meta.port, createdAt: new Date().toISOString() };
-      emitPlayit();
-      setTimeout(() => {
-        const t = playit.tunnels.find((t) => t.id === tunnelId);
-        if (!t) return;
-        t.address = `${s.meta.id.split("-")[0]}-friends.gl.joinmc.link`;
-        t.pending = null;
-        emitPlayit();
-      }, 2500);
-      if (s.status.state === "running") void acquireAgent(id);
-      return { ...s.meta };
+      return createTunnel(id);
     },
     tryDirectAccess: async (id) => {
       const s = servers.get(id)!;

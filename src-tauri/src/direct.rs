@@ -210,6 +210,19 @@ impl DirectManager {
         }));
     }
 
+    /// Повторно сообщает интерфейсу текущее состояние (например, после сохранения server.json).
+    pub fn notify(&self, id: &str) {
+        self.update(id, |_| {});
+    }
+
+    /// Состояние для интерфейса без проброса: «проверяю» или «не получилось, причина».
+    pub fn set_state(&self, id: &str, state: DirectState, error: Option<String>) {
+        self.update(id, |info| {
+            info.state = state;
+            info.error = error;
+        });
+    }
+
     /// Проверка при включении доступа: можно ли напрямую. Порт сразу закрывается,
     /// если сервер не запущен (`keep = false`).
     pub async fn probe(self: &Arc<Self>, id: &str, port: u16, keep: bool) -> Result<String, DirectError> {

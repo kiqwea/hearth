@@ -31,7 +31,7 @@ use crate::providers;
 use crate::servers::{
     self, CreateServerRequest, PlayitTunnel, PropertyEntry, ServerMeta, ServerPatch, ServerStore,
 };
-use crate::direct::{DirectInfo, DirectManager};
+use crate::direct::{DirectInfo, DirectManager, DirectState};
 use crate::tunnel::api::PlayitApi;
 use crate::tunnel::secret::SecretStore;
 use crate::tunnel::PlayitManager;
@@ -360,6 +360,8 @@ impl ServerManager {
                 tracing::info!("Прямое подключение для сервера {id}: {address}");
                 meta.direct_access = true;
                 store.save(&meta).await?;
+                // Интерфейс перечитает сервер и увидит, что доступ включён.
+                self.direct.notify(id);
                 Ok(DirectAttempt {
                     meta,
                     address: Some(address),
@@ -408,6 +410,45 @@ impl ServerManager {
         Ok(meta)
     }
 
+    /// Доступ для друзей ещё не настроен: Hearth делает это сам при запуске.
+    /// Сначала напрямую (порт на роутере), иначе playit, если он уже подключён.
+    /// Если playit не подключён, интерфейс предложит войти в него: без
+    /// пользователя этого не сделать.
+    fn auto_friend_access(self: &Arc<Self>, id: &str) {
+        let this = self.clone();
+        let id = id.to_string();
+        tokio::spawn(async move {
+            this.direct.set_state(&id, DirectState::Opening, None);
+            let reason = match this.try_direct_access(&id).await {
+                Ok(attempt) if attempt.address.is_some() => {
+                    if let Some(address) = attempt.address {
+                        this.push_line(&id, ConsoleStream::System, format!("Адрес для друзей: {address}"));
+                    }
+                    return;
+                }
+                Ok(attempt) => attempt.reason.unwrap_or_default(),
+                Err(e) => e.to_string(),
+            };
+            if this.running(&id).is_none() {
+                this.direct.set_state(&id, DirectState::Off, None);
+                return;
+            }
+            this.direct.set_state(&id, DirectState::Failed, Some(reason.clone()));
+            if this.playit.linked() {
+                // Адрес появится через playit; enable сам поднимет агент для запущенного сервера.
+                if let Err(e) = this.enable_friend_access(&id).await {
+                    this.push_line(&id, ConsoleStream::System, format!("Доступ для друзей не включился: {e}"));
+                }
+            } else {
+                this.push_line(
+                    &id,
+                    ConsoleStream::System,
+                    format!("Напрямую друзья подключиться не смогут ({reason}). Войдите в playit.gg на вкладке «Обзор»."),
+                );
+            }
+        });
+    }
+
     /// Сервер с доступом для друзей запустился: поправить порт туннеля, если
     /// он поменялся, и поднять агент playit. Ошибки пишутся в консоль сервера.
     fn start_friend_access(self: &Arc<Self>, id: &str, meta: &ServerMeta, port: u16) {
@@ -415,7 +456,10 @@ impl ServerManager {
             self.direct.start(id, port);
             return;
         }
-        let Some(tunnel) = meta.playit.clone() else { return };
+        let Some(tunnel) = meta.playit.clone() else {
+            self.auto_friend_access(id);
+            return;
+        };
         let this = self.clone();
         let id = id.to_string();
         tokio::spawn(async move {

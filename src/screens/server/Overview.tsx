@@ -11,7 +11,6 @@ import { useHearth } from "../../lib/store";
 
 export function Overview({ server }: { server: ServerSummary }) {
   const { meta, status } = server;
-  const network = useHearth((s) => s.network);
   const since = useHearth((s) => s.runningSince[meta.id]);
   const openServer = useHearth((s) => s.openServer);
   const [now, setNow] = useState(() => Date.now());
@@ -63,7 +62,6 @@ export function Overview({ server }: { server: ServerSummary }) {
         <h2 className="m-0 text-base font-semibold">{t.overview.connect}</h2>
         <FriendAccess server={server} />
         <div className="flex flex-wrap gap-2.5">
-          <Address label={t.overview.lan} value={network?.lanIp ? withPort(network.lanIp, meta.port) : null} />
           <Address label={t.overview.local} value={withPort("localhost", meta.port)} />
         </div>
       </Card>
