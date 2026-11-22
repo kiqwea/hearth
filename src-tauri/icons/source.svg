@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Исходник иконки Hearth. PNG и ICO генерируются: npx tauri icon src-tauri/icons/source.svg -->
+  <defs>
+    <linearGradient id="flame" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffcf7a"/>
+      <stop offset="0.55" stop-color="#f0a04b"/>
+      <stop offset="1" stop-color="#e2692a"/>
+    </linearGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a221b"/>
+      <stop offset="1" stop-color="#16120f"/>
+    </linearGradient>
+  </defs>
+  <rect x="40" y="40" width="944" height="944" rx="216" fill="url(#bg)"/>
+  <g transform="translate(512 520) scale(36) translate(-12 -10.5)">
+    <path d="M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2.5 1.5-4 2.5-5 .3 1.6 1.2 2.6 2.2 3C11 9 11 6 12 3z" fill="url(#flame)"/>
+    <path d="M12 10.6c.6 1.7 2.1 2.6 2.1 4.5a2.1 2.1 0 0 1-4.2 0c0-1.1.6-1.7 1-2.1.2.6.5 1 .9 1.2-.1-1.3-.2-2.4.2-3.6z" fill="#fff1d2" opacity="0.9"/>
+  </g>
+</svg>

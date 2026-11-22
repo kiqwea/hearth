@@ -17,7 +17,7 @@ export function Sidebar() {
   const selectedId = view.kind === "server" ? view.id : null;
 
   return (
-    <aside className="w-[248px] shrink-0 bg-side border-r border-line px-3.5 py-5 flex flex-col gap-[18px] overflow-y-auto">
+    <aside className="w-[264px] shrink-0 bg-side border-r border-line px-3.5 py-5 flex flex-col gap-[18px] overflow-y-auto">
       <div className="flex items-center gap-2.5 px-2">
         <Flame size={26} strokeWidth={1.8} className="text-accent" aria-hidden="true" />
         <span className="text-xl font-bold tracking-tight">{t.app.name}</span>
@@ -52,7 +52,9 @@ export function Sidebar() {
                 {initial(meta.name)}
               </span>
               <span className="flex flex-col gap-0.5 min-w-0 flex-1">
-                <span className="font-semibold truncate">{meta.name}</span>
+                <span className="font-semibold leading-snug line-clamp-2 break-words" title={meta.name}>
+                  {meta.name}
+                </span>
                 <span className={`text-xs truncate ${status.state === "installing" ? "text-link" : "text-muted"}`}>{subtitle}</span>
               </span>
               <StatusDot tone={statusTone(status)} />

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, Check, Info, X } from "lucide-react";
+import { ArrowRight, Check, Info, ShieldCheck, X } from "lucide-react";
 
 import type { Difficulty } from "../../bindings/Difficulty";
 import type { GameMode } from "../../bindings/GameMode";
@@ -473,6 +473,16 @@ function InstallStep({
             </div>
           )}
         </Card>
+      )}
+
+      {started && !done && !error && (
+        <div className="flex gap-3 items-start px-4 py-3 rounded-xl bg-accent-soft text-accent-text">
+          <ShieldCheck size={20} className="shrink-0 mt-0.5" aria-hidden="true" />
+          <span className="flex flex-col gap-1">
+            <b>{t.wizard.firewallTitle}</b>
+            <span className="text-soft">{t.wizard.firewallText}</span>
+          </span>
+        </div>
       )}
 
       {started && !done && !error && (

@@ -128,6 +128,8 @@
 - Ручные команды пользователя идут в stdin. Служебные (`list`, TPS, `save-all` при бэкапе) идут через RCON на `127.0.0.1` со случайным паролем, наружу RCON не открывается.
 - TPS: `tps` (Paper/Purpur), `/tick query` (Vanilla/Fabric 1.20.3+), иначе Spark.
 - Хранение: `config.json` лежит в `%APPDATA%\Hearth`. JRE, кэш, playit и серверы лежат в `%LOCALAPPDATA%\Hearth`, корневую папку серверов можно сменить.
+- Установщик NSIS ставит программу для текущего пользователя в тот же `%LOCALAPPDATA%\Hearth` (так делает шаблон Tauri). Удаление стирает только `hearth.exe`, `uninstall.exe` и ярлык, а `java`, `cache`, `logs`, `servers` остаются (проверено). Размер установщика около 3 МБ.
+- Minecraft 26.x при первом запуске включает `white-list=true`; Hearth при создании сервера явно ставит `white-list=false`.
 - Job Object в MVP. Процесс-сторож, который при падении приложения отправит `stop`, сделаем позже.
 - Токен playit хранится в Windows Credential Manager (crate `keyring`).
 - При закрытии окна с запущенным сервером приложение по умолчанию сворачивается в трей.
