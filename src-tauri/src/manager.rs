@@ -31,6 +31,7 @@ use crate::providers;
 use crate::servers::{
     self, CreateServerRequest, PlayitTunnel, PropertyEntry, ServerMeta, ServerPatch, ServerStore,
 };
+use crate::direct::{DirectInfo, DirectManager};
 use crate::tunnel::api::PlayitApi;
 use crate::tunnel::secret::SecretStore;
 use crate::tunnel::PlayitManager;
@@ -44,6 +45,20 @@ pub const STOP_TIMEOUT: Duration = Duration::from_secs(90);
 pub struct ServerSummary {
     pub meta: ServerMeta,
     pub status: ServerStatus,
+    /// Прямое подключение (если включено и Hearth уже что-то о нём знает).
+    pub direct: Option<DirectInfo>,
+}
+
+/// Итог попытки включить прямое подключение.
+#[derive(Serialize, Clone, Debug, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DirectAttempt {
+    pub meta: ServerMeta,
+    /// Адрес для друзей, если напрямую получилось.
+    pub address: Option<String>,
+    /// Почему не получилось (тогда интерфейс предлагает playit).
+    pub reason: Option<String>,
 }
 
 struct RunningServer {
@@ -72,6 +87,7 @@ pub struct ServerManager {
     inner: Mutex<Inner>,
     job: Option<Arc<Job>>,
     playit: Arc<PlayitManager>,
+    direct: Arc<DirectManager>,
     /// Включение и отключение доступа для друзей идут по очереди, чтобы не создать два туннеля.
     access_ops: tokio::sync::Mutex<()>,
 }
@@ -120,7 +136,9 @@ impl ServerManager {
             sink.clone(),
             job.clone(),
         );
+        let direct = DirectManager::new(sink.clone());
         Arc::new(Self {
+            direct,
             java: JavaManager::new(paths.java_dir(), &paths.cache_dir(), http.clone()),
             http,
             store: RwLock::new(ServerStore::new(servers_dir)),
@@ -236,19 +254,20 @@ impl ServerManager {
         self.store()
             .list()
             .into_iter()
-            .map(|meta| ServerSummary {
-                status: self.status(&meta.id),
-                meta,
-            })
+            .map(|meta| self.summary(meta))
             .collect()
     }
 
     pub fn get(&self, id: &str) -> Result<ServerSummary> {
-        let meta = self.store().load(id)?;
-        Ok(ServerSummary {
-            status: self.status(id),
+        Ok(self.summary(self.store().load(id)?))
+    }
+
+    fn summary(&self, meta: ServerMeta) -> ServerSummary {
+        ServerSummary {
+            status: self.status(&meta.id),
+            direct: self.direct.info(&meta.id),
             meta,
-        })
+        }
     }
 
     pub async fn create(&self, req: CreateServerRequest) -> Result<ServerMeta> {
@@ -281,6 +300,7 @@ impl ServerManager {
             inner.consoles.remove(id);
         }
         self.playit.release(id).await;
+        self.direct.forget(id);
         if let (true, Some(tunnel)) = (delete_tunnel, tunnel) {
             if let Err(e) = self.playit.delete_tunnel(&tunnel.tunnel_id).await {
                 tracing::warn!("Не удалось удалить туннель playit {} сервера {id}: {e}", tunnel.tunnel_id);
@@ -326,11 +346,52 @@ impl ServerManager {
         Ok(meta)
     }
 
-    /// Убирает адрес для друзей: туннель удаляется из аккаунта playit.
+    /// Пробует прямое подключение (проброс порта на роутере). Если получилось,
+    /// сервер дальше работает напрямую, без playit. Если нет, в ответе причина,
+    /// и интерфейс предлагает playit.
+    pub async fn try_direct_access(self: &Arc<Self>, id: &str) -> Result<DirectAttempt> {
+        let _ops = self.access_ops.lock().await;
+        let store = self.store();
+        let mut meta = store.load(id)?;
+        let port = self.current_port(&store, id, &meta);
+        let running = self.running(id).is_some();
+        match self.direct.probe(id, port, running).await {
+            Ok(address) => {
+                tracing::info!("Прямое подключение для сервера {id}: {address}");
+                meta.direct_access = true;
+                store.save(&meta).await?;
+                Ok(DirectAttempt {
+                    meta,
+                    address: Some(address),
+                    reason: None,
+                })
+            }
+            Err(e) => {
+                tracing::info!("Прямое подключение для сервера {id} недоступно: {e}");
+                Ok(DirectAttempt {
+                    meta,
+                    address: None,
+                    reason: Some(e.to_string()),
+                })
+            }
+        }
+    }
+
+    /// Убирает адрес для друзей: проброс порта снимается, туннель удаляется из аккаунта playit.
     pub async fn disable_friend_access(&self, id: &str) -> Result<ServerMeta> {
         let _ops = self.access_ops.lock().await;
         let store = self.store();
         let mut meta = store.load(id)?;
+        if meta.direct_access {
+            meta.direct_access = false;
+            self.direct.forget(id);
+            store.save(&meta).await?;
+            self.sink.emit(Event::Direct(crate::direct::DirectEvent {
+                server_id: id.to_string(),
+                info: DirectInfo::default(),
+            }));
+            return Ok(meta);
+        }
         if let Some(tunnel) = &meta.playit {
             match self.playit.delete_tunnel(&tunnel.tunnel_id).await {
                 Ok(()) => {}
@@ -350,6 +411,10 @@ impl ServerManager {
     /// Сервер с доступом для друзей запустился: поправить порт туннеля, если
     /// он поменялся, и поднять агент playit. Ошибки пишутся в консоль сервера.
     fn start_friend_access(self: &Arc<Self>, id: &str, meta: &ServerMeta, port: u16) {
+        if meta.direct_access {
+            self.direct.start(id, port);
+            return;
+        }
         let Some(tunnel) = meta.playit.clone() else { return };
         let this = self.clone();
         let id = id.to_string();
@@ -632,6 +697,7 @@ impl ServerManager {
             this.push_line(&id, ConsoleStream::System, message);
             this.set_status(&id, status);
             let _ = exit_tx.send(true);
+            this.direct.stop(&id);
             this.playit.release(&id).await;
         });
         self.start_friend_access(&id_owned, &meta, port);

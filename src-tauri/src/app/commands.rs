@@ -9,7 +9,7 @@ use super::AppState;
 use crate::config::AppConfig;
 use crate::error::{Error, Result};
 use crate::java::InstalledJava;
-use crate::manager::{ServerSummary, STOP_TIMEOUT};
+use crate::manager::{DirectAttempt, ServerSummary, STOP_TIMEOUT};
 use crate::process::ConsoleLine;
 use crate::providers::{self, GameVersion, Loader};
 use crate::servers::{self, CreateServerRequest, PropertyEntry, ServerMeta, ServerPatch};
@@ -48,7 +48,14 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         playit_dashboard_url,
         enable_friend_access,
         disable_friend_access,
+        try_direct_access,
     ]
+}
+
+/// Сначала пробуем без посредников: проброс порта на роутере.
+#[tauri::command]
+async fn try_direct_access(state: State<'_, AppState>, id: String) -> Result<DirectAttempt> {
+    state.manager.try_direct_access(&id).await
 }
 
 #[tauri::command]

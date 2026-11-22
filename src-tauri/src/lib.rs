@@ -3,6 +3,7 @@
 //! Ядро (всё, кроме `app`) не зависит от Tauri и тестируется отдельно.
 
 pub mod config;
+pub mod direct;
 pub mod error;
 pub mod events;
 pub mod fsx;

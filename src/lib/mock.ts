@@ -5,6 +5,7 @@ import type { ConsoleLine } from "../bindings/ConsoleLine";
 import type { ConsoleStream } from "../bindings/ConsoleStream";
 import type { Event } from "../bindings/Event";
 import type { GameVersion } from "../bindings/GameVersion";
+import type { DirectInfo } from "../bindings/DirectInfo";
 import type { InstallProgress } from "../bindings/InstallProgress";
 import type { PlayitAgentState } from "../bindings/PlayitAgentState";
 import type { PlayitStatus } from "../bindings/PlayitStatus";
@@ -51,6 +52,7 @@ function meta(partial: Partial<ServerMeta> & Pick<ServerMeta, "id" | "name" | "l
     eulaAcceptedAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
     playit: null,
+    directAccess: false,
     ...partial,
   };
 }
@@ -59,7 +61,16 @@ export function createMockApi(): HearthApi {
   const handlers = new Set<(e: Event) => void>();
   const emit = (e: Event) => handlers.forEach((h) => h(e));
 
-  const servers = new Map<string, { meta: ServerMeta; status: ServerStatus; props: Record<string, string> }>();
+  const servers = new Map<
+    string,
+    { meta: ServerMeta; status: ServerStatus; props: Record<string, string>; direct?: DirectInfo | null }
+  >();
+  // Прямое подключение: у «Модового» роутер открывает порт, у остальных — нет (как при CGNAT).
+  const directWorks = (id: string) => id.startsWith("modded");
+  const setDirect = (id: string, info: DirectInfo) => {
+    servers.get(id)!.direct = info;
+    emit({ type: "direct", data: { serverId: id, info } });
+  };
   const consoles = new Map<string, ConsoleLine[]>();
   let seq = 0;
 
@@ -160,6 +171,11 @@ export function createMockApi(): HearthApi {
     line(id, "stdout", "[18:20:05 INFO]: Done (3.912s)! For help, type \"help\"");
     setStatus(id, { state: "running" });
     if (s.meta.playit) void acquireAgent(id);
+    if (s.meta.directAccess) {
+      setDirect(id, { state: "opening", address: s.direct?.address ?? null, error: null });
+      await wait(1200);
+      setDirect(id, { state: "open", address: "92.208.220.160", error: null });
+    }
   };
 
   const versions: GameVersion[] = [
@@ -174,7 +190,7 @@ export function createMockApi(): HearthApi {
   const summary = (id: string) => {
     const s = servers.get(id);
     if (!s) throw { kind: "serverNotFound", message: "Сервер не найден" };
-    return { meta: { ...s.meta }, status: s.status };
+    return { meta: { ...s.meta }, status: s.status, direct: s.direct ?? null };
   };
 
   return {
@@ -225,6 +241,8 @@ export function createMockApi(): HearthApi {
       line(id, "system", "Сервер остановлен");
       setStatus(id, { state: "stopped" });
       releaseAgent(id);
+      const s = servers.get(id)!;
+      if (s.meta.directAccess) setDirect(id, { state: "off", address: s.direct?.address ?? null, error: null });
     },
     kill: async (id) => {
       line(id, "system", "Принудительное завершение сервера");
@@ -300,9 +318,29 @@ export function createMockApi(): HearthApi {
       if (s.status.state === "running") void acquireAgent(id);
       return { ...s.meta };
     },
+    tryDirectAccess: async (id) => {
+      const s = servers.get(id)!;
+      await wait(1500);
+      if (!directWorks(id)) {
+        return {
+          meta: { ...s.meta },
+          address: null,
+          reason: "роутер не разрешает автоматически открыть порт (UPnP выключен или не поддерживается)",
+        };
+      }
+      s.meta.directAccess = true;
+      const running = s.status.state === "running";
+      setDirect(id, { state: running ? "open" : "off", address: "92.208.220.160", error: null });
+      return { meta: { ...s.meta }, address: "92.208.220.160", reason: null };
+    },
     disableFriendAccess: async (id) => {
       const s = servers.get(id)!;
       await wait(500);
+      if (s.meta.directAccess) {
+        s.meta.directAccess = false;
+        setDirect(id, { state: "off", address: null, error: null });
+        return { ...s.meta };
+      }
       playit.tunnels = playit.tunnels.filter((t) => t.id !== s.meta.playit?.tunnelId);
       s.meta.playit = null;
       releaseAgent(id);

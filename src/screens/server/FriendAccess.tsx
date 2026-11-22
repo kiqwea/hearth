@@ -17,6 +17,9 @@ export function FriendAccess({ server }: { server: ServerSummary }) {
   const { meta, status } = server;
   const playit = useHearth((s) => s.playit);
   const busy = useHearth((s) => !!s.accessBusy[meta.id]);
+  const trying = useHearth((s) => !!s.directTrying[meta.id]);
+  const directReason = useHearth((s) => s.directReason[meta.id]);
+  const switchToPlayit = useHearth((s) => s.switchToPlayit);
   const connect = useHearth((s) => s.connectFriendAccess);
   const enable = useHearth((s) => s.enableFriendAccess);
   const disable = useHearth((s) => s.disableFriendAccess);
@@ -38,10 +41,59 @@ export function FriendAccess({ server }: { server: ServerSummary }) {
     }
   };
 
+  const reasonLine = directReason && !tunnel && (
+    <span className="text-[13px] text-muted">{t.access.directFailed(directReason)}</span>
+  );
+
   let body;
-  if (claimUrl) {
+  if (meta.directAccess) {
+    const direct = server.direct;
+    const address = direct?.address ?? null;
+    const state = direct?.state ?? "off";
+    let tone: Tone = "off";
+    let line: string = address ? t.access.directStopped : t.access.directUnknown;
+    if (state === "opening") {
+      tone = "busy";
+      line = t.access.directOpening;
+    } else if (state === "open") {
+      tone = "ok";
+      line = t.access.directOpen;
+    } else if (state === "failed") {
+      tone = "err";
+      line = t.access.directError(direct?.error ?? t.errors.generic);
+    }
+    body = (
+      <div className="flex flex-col gap-2.5">
+        <AddressRow
+          address={address}
+          placeholder={t.access.directNoAddress}
+          busy={busy}
+          onDisable={() => setConfirmDisable(true)}
+        />
+        <span className="flex flex-wrap items-center gap-2 text-[13px] text-soft" role="status">
+          <StatusDot tone={tone} />
+          <span className={tone === "err" ? "text-err" : undefined}>{line}</span>
+          {state === "failed" && (
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => void switchToPlayit(meta.id)}>
+              {t.access.usePlayit}
+            </Button>
+          )}
+        </span>
+        {address && <span className="text-[13px] text-muted">{t.access.howTo}</span>}
+        {state !== "failed" && (
+          <span className="text-[13px] text-muted">
+            {t.access.directHint}{" "}
+            <button type="button" className="underline text-link" disabled={busy} onClick={() => void switchToPlayit(meta.id)}>
+              {t.access.usePlayit}
+            </button>
+          </span>
+        )}
+      </div>
+    );
+  } else if (claimUrl) {
     body = (
       <div className="flex flex-col gap-3">
+        {reasonLine}
         <div className="flex items-start gap-3">
           <Spinner className="!w-5 !h-5 !border-2 mt-0.5" />
           <span className="flex flex-col gap-1">
@@ -74,17 +126,23 @@ export function FriendAccess({ server }: { server: ServerSummary }) {
     body = (
       <div className="flex flex-col gap-3">
         <span className="text-soft leading-relaxed">
-          {tunnel && !linked ? t.playitSettings.notLinked : linked ? t.access.introLinked : t.access.intro}
+          {tunnel && !linked ? t.playitSettings.notLinked : t.access.intro}
         </span>
+        {reasonLine}
         {playit?.claimError && (
           <span role="alert" className="text-err text-[13px]">
             {playit.claimError}
           </span>
         )}
         <div className="flex flex-wrap items-center gap-3">
-          <Button variant="primary" size="sm" disabled={busy} onClick={() => void connect(meta.id)}>
-            {busy && <Spinner className="!w-4 !h-4 !border-2" />}
-            {busy ? t.access.enabling : t.access.enable}
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={busy || trying}
+            onClick={() => void connect(meta.id, { skipDirect: !!tunnel || !!directReason })}
+          >
+            {(busy || trying) && <Spinner className="!w-4 !h-4 !border-2" />}
+            {trying ? t.access.tryingDirect : busy ? t.access.enabling : t.access.enable}
           </Button>
           {!linked && <span className="text-[13px] text-muted">{t.access.firstTime}</span>}
         </div>
@@ -123,26 +181,7 @@ export function FriendAccess({ server }: { server: ServerSummary }) {
 
     body = (
       <div className="flex flex-col gap-2.5">
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <span
-            className={`flex-[1_1_220px] min-w-0 font-mono text-[17px] font-semibold selectable truncate ${address ? "text-ink" : "text-faint"}`}
-          >
-            {address ?? t.access.addressPending}
-          </span>
-          {address && (
-            <IconButton
-              label={t.access.copyAddress}
-              onClick={async () => {
-                if (await copyText(address)) toast("success", `${t.actions.copied}: ${address}`);
-              }}
-            >
-              <Copy size={16} aria-hidden="true" />
-            </IconButton>
-          )}
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => setConfirmDisable(true)}>
-            {t.access.disable}
-          </Button>
-        </div>
+        <AddressRow address={address} busy={busy} onDisable={() => setConfirmDisable(true)} />
         <span className="flex items-center gap-2 text-[13px] text-soft" role="status">
           <StatusDot tone={tone} />
           <span className={tone === "err" ? "text-err" : undefined}>{line}</span>
@@ -211,8 +250,45 @@ export function FriendAccess({ server }: { server: ServerSummary }) {
           </>
         }
       >
-        <p className="m-0">{t.access.disableText}</p>
+        <p className="m-0">{meta.directAccess ? t.access.disableDirectText : t.access.disableText}</p>
       </Dialog>
+    </div>
+  );
+}
+
+/** Адрес крупно, кнопка «Копировать» и «Отключить». */
+function AddressRow({
+  address,
+  placeholder = t.access.addressPending,
+  busy,
+  onDisable,
+}: {
+  address: string | null;
+  placeholder?: string;
+  busy: boolean;
+  onDisable: () => void;
+}) {
+  const toast = useHearth((s) => s.toast);
+  return (
+    <div className="flex items-center gap-2.5 flex-wrap">
+      <span
+        className={`flex-[1_1_220px] min-w-0 font-mono text-[17px] font-semibold selectable truncate ${address ? "text-ink" : "text-faint"}`}
+      >
+        {address ?? placeholder}
+      </span>
+      {address && (
+        <IconButton
+          label={t.access.copyAddress}
+          onClick={async () => {
+            if (await copyText(address)) toast("success", `${t.actions.copied}: ${address}`);
+          }}
+        >
+          <Copy size={16} aria-hidden="true" />
+        </IconButton>
+      )}
+      <Button size="sm" variant="ghost" disabled={busy} onClick={onDisable}>
+        {t.access.disable}
+      </Button>
     </div>
   );
 }

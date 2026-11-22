@@ -55,9 +55,18 @@ interface HearthState {
   pendingAccess: string | null;
   /** Серверы, для которых сейчас создаётся или удаляется адрес. */
   accessBusy: Record<string, boolean>;
+  /** Сервер, для которого сейчас проверяется прямое подключение. */
+  directTrying: Record<string, boolean>;
+  /** Почему напрямую не получилось (показываем рядом с предложением playit). */
+  directReason: Record<string, string>;
 
-  /** «Включить доступ для друзей»: при необходимости сначала подключает playit через браузер. */
-  connectFriendAccess(id: string): Promise<void>;
+  /**
+   * «Включить доступ для друзей»: сначала напрямую (порт на роутере), если не
+   * получилось — playit, при необходимости с подключением аккаунта в браузере.
+   */
+  connectFriendAccess(id: string, options?: { skipDirect?: boolean }): Promise<void>;
+  /** Перейти с прямого подключения на playit (например, если друзья не могут зайти). */
+  switchToPlayit(id: string): Promise<void>;
   enableFriendAccess(id: string): Promise<void>;
   disableFriendAccess(id: string): Promise<void>;
   cancelPlayitClaim(): Promise<void>;
@@ -98,8 +107,28 @@ export const useHearth = create<HearthState>((set, get) => ({
   playit: null,
   pendingAccess: null,
   accessBusy: {},
+  directTrying: {},
+  directReason: {},
 
-  async connectFriendAccess(id) {
+  async connectFriendAccess(id, options) {
+    const meta = get().servers[id]?.meta;
+    if (!options?.skipDirect && meta && !meta.playit && !meta.directAccess) {
+      set((st) => ({ directTrying: { ...st.directTrying, [id]: true } }));
+      try {
+        const attempt = await api.tryDirectAccess(id);
+        setMeta(attempt.meta);
+        if (attempt.address) {
+          get().toast("success", t.access.enabledDirect);
+          return;
+        }
+        if (attempt.reason) set((st) => ({ directReason: { ...st.directReason, [id]: attempt.reason! } }));
+      } catch (e) {
+        get().toastError(e);
+        return;
+      } finally {
+        set((st) => ({ directTrying: { ...st.directTrying, [id]: false } }));
+      }
+    }
     const playit = get().playit;
     if (playit?.linked) return get().enableFriendAccess(id);
     set({ pendingAccess: id });
@@ -110,6 +139,11 @@ export const useHearth = create<HearthState>((set, get) => ({
       set({ pendingAccess: null });
       get().toastError(e);
     }
+  },
+
+  async switchToPlayit(id) {
+    await get().disableFriendAccess(id);
+    if (!get().servers[id]?.meta.directAccess) await get().connectFriendAccess(id, { skipDirect: true });
   },
 
   async enableFriendAccess(id) {
@@ -298,6 +332,14 @@ function handleEvent(event: Event) {
     case "playit":
       onPlayit(event.data);
       break;
+    case "direct": {
+      const { serverId, info } = event.data;
+      useHearth.setState((st) => {
+        const existing = st.servers[serverId];
+        return existing ? { servers: { ...st.servers, [serverId]: { ...existing, direct: info } } } : {};
+      });
+      break;
+    }
   }
 }
 

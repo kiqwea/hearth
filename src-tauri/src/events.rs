@@ -29,6 +29,8 @@ pub enum Event {
     Install(InstallEvent),
     /// Изменилось состояние playit: подключение аккаунта, агент, адреса туннелей.
     Playit(PlayitStatus),
+    /// Изменилось прямое подключение сервера (проброс порта на роутере).
+    Direct(crate::direct::DirectEvent),
 }
 
 #[derive(Serialize, Clone, Debug, TS)]

@@ -18,4 +18,8 @@ jar: string | null, javaMajor: number | null, memoryMb: number, port: number, jv
 /**
  * Постоянный адрес для друзей через playit.gg. `null`: доступ не включён.
  */
-playit: PlayitTunnel | null, };
+playit: PlayitTunnel | null, 
+/**
+ * Доступ для друзей напрямую: Hearth открывает порт на роутере (UPnP).
+ */
+directAccess: boolean, };

@@ -105,6 +105,9 @@ pub struct ServerMeta {
     /// Постоянный адрес для друзей через playit.gg. `null`: доступ не включён.
     #[serde(default)]
     pub playit: Option<PlayitTunnel>,
+    /// Доступ для друзей напрямую: Hearth открывает порт на роутере (UPnP).
+    #[serde(default)]
+    pub direct_access: bool,
 }
 
 /// Туннель playit этого сервера. Создаётся один раз и не меняется между запусками.
@@ -318,6 +321,7 @@ impl ServerStore {
             eula_accepted_at: Some(now),
             created_at: now,
             playit: None,
+            direct_access: false,
         };
 
         let game_dir = self.game_dir(&id);

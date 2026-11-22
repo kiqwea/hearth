@@ -10,6 +10,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { AppConfig } from "../bindings/AppConfig";
 import type { ConsoleLine } from "../bindings/ConsoleLine";
 import type { CreateServerRequest } from "../bindings/CreateServerRequest";
+import type { DirectAttempt } from "../bindings/DirectAttempt";
 import type { Event } from "../bindings/Event";
 import type { GameVersion } from "../bindings/GameVersion";
 import type { InstalledJava } from "../bindings/InstalledJava";
@@ -73,6 +74,8 @@ export interface HearthApi {
   playitRetry(): Promise<void>;
   playitDashboardUrl(): Promise<string>;
   enableFriendAccess(id: string): Promise<ServerMeta>;
+  /** Сначала без посредников: проброс порта на роутере (UPnP). */
+  tryDirectAccess(id: string): Promise<DirectAttempt>;
   disableFriendAccess(id: string): Promise<ServerMeta>;
 
   onEvent(handler: (event: Event) => void): Promise<() => void>;
@@ -148,6 +151,7 @@ const tauriApi: HearthApi = {
   playitRetry: () => invoke("playit_retry"),
   playitDashboardUrl: () => invoke("playit_dashboard_url"),
   enableFriendAccess: (id) => invoke("enable_friend_access", { id }),
+  tryDirectAccess: (id) => invoke("try_direct_access", { id }),
   disableFriendAccess: (id) => invoke("disable_friend_access", { id }),
 
   onEvent: (handler) => listen<Event>("hearth://event", (e) => handler(e.payload)),
