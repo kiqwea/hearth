@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+/* Цвета и шрифты Hearth (вариант A «Угли» из макетов).
+   Меняете акцент или фон здесь — меняется во всём приложении. */
+@theme {
+  --font-sans: "Onest", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --color-bg: #141210;
+  --color-side: #1a1714;
+  --color-card: #1c1915;
+  --color-raised: #241e18;
+  --color-chip: #241f1a;
+  --color-hover: #2a241e;
+  --color-line: #2a2520;
+  --color-line-soft: #221e1a;
+  --color-line-strong: #3a332c;
+  --color-term: #0f0d0b;
+
+  --color-ink: #ede6dd;
+  --color-soft: #c9bfb3;
+  --color-muted: #a39a8f;
+  --color-faint: #8d857b;
+
+  --color-accent: #f0a04b;
+  --color-accent-ink: #1b120a;
+  --color-accent-soft: #2a1f15;
+  --color-accent-text: #ffd29e;
+  --color-link: #f3b46b;
+
+  --color-ok: #5fd08f;
+  --color-ok-bg: #1f3328;
+  --color-ok-text: #8fe3b2;
+  --color-warn: #f2c46b;
+  --color-warn-bg: #3a2e16;
+  --color-err: #ff8f80;
+  --color-err-bg: #3a1d19;
+  --color-off: #5b544c;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+
+  /* Текст в полях, консоли и адресах выделять можно. */
+  input,
+  textarea,
+  .selectable {
+    user-select: text;
+  }
+
+  button,
+  a,
+  select,
+  input[type="checkbox"],
+  input[type="range"],
+  summary {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: #5a3d1f;
+  }
+
+  input[type="checkbox"],
+  input[type="range"] {
+    accent-color: var(--color-accent);
+  }
+
+  select option {
+    background: var(--color-card);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #3a332c;
+    border-radius: 5px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  dialog::backdrop {
+    background: rgb(0 0 0 / 0.6);
+  }
+}
