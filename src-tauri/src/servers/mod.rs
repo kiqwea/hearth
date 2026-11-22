@@ -108,6 +108,16 @@ pub struct ServerMeta {
     /// Доступ для друзей напрямую: Hearth открывает порт на роутере (UPnP).
     #[serde(default)]
     pub direct_access: bool,
+    /// Пиратский режим: вход с нелицензионных клиентов (`online-mode=false`).
+    #[serde(default)]
+    pub pirate_mode: bool,
+    /// Файл плагина/мода авторизации, который поставил Hearth (чтобы убрать его
+    /// при выключении режима). `null` — авторизации нет.
+    #[serde(default)]
+    pub auth_plugin: Option<String>,
+    /// AuthMe уже переключён на русский язык.
+    #[serde(default)]
+    pub auth_lang_set: bool,
 }
 
 /// Туннель playit этого сервера. Создаётся один раз и не меняется между запусками.
@@ -220,6 +230,11 @@ impl ServerStore {
         &self.root
     }
 
+    /// Резервные копии мира: `servers/<id>/backups/`.
+    pub fn backups_dir(&self, id: &str) -> PathBuf {
+        self.server_root(id).join("backups")
+    }
+
     pub fn server_root(&self, id: &str) -> PathBuf {
         self.root.join(id)
     }
@@ -322,6 +337,9 @@ impl ServerStore {
             created_at: now,
             playit: None,
             direct_access: false,
+            pirate_mode: false,
+            auth_plugin: None,
+            auth_lang_set: false,
         };
 
         let game_dir = self.game_dir(&id);

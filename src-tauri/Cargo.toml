@@ -1,6 +1,6 @@
 [package]
 name = "hearth"
-version = "0.2.3"
+version = "0.3.0"
 description = "Hearth: локальные серверы Minecraft в пару кликов"
 authors = ["Hearth"]
 edition = "2024"
@@ -42,6 +42,7 @@ reqwest = { version = "0.13.5", default-features = false, features = ["json", "s
 tauri-plugin-updater = "2.14.1"
 tauri-plugin-process = "2.4.0"
 igd-next = { version = "0.18", default-features = false, features = ["aio_tokio"] }
+md-5 = "0.11.0"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

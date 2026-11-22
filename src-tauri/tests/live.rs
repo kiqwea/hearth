@@ -12,7 +12,9 @@ use hearth_lib::net::Http;
 use hearth_lib::paths::Paths;
 use hearth_lib::process::ServerStatus;
 use hearth_lib::providers::{self, Loader};
+use hearth_lib::pirate;
 use hearth_lib::servers::{CreateServerRequest, Difficulty, GameMode};
+use hearth_lib::tunnel::secret::MemoryStore;
 
 #[derive(Default)]
 struct PrintSink {
@@ -26,6 +28,113 @@ impl EventSink for PrintSink {
         }
         self.events.lock().unwrap().push(event);
     }
+}
+
+/// Менеджер с ключом playit в памяти: тесты не должны трогать настоящий аккаунт
+/// playit пользователя (из диспетчера учётных данных).
+fn test_manager(paths: &Paths, http: &Http, servers: &std::path::Path, sink: Arc<PrintSink>) -> Arc<ServerManager> {
+    ServerManager::with_secrets(paths, http.clone(), servers.to_path_buf(), sink, Box::new(MemoryStore::default()))
+}
+
+async fn wait_running(manager: &ServerManager, id: &str) {
+    let started = Instant::now();
+    while manager.status(id) != ServerStatus::Running {
+        assert!(manager.status(id).is_active(), "сервер не запустился: {:?}", manager.status(id));
+        assert!(started.elapsed() < Duration::from_secs(600), "сервер запускается слишком долго");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+/// Пиратский режим на настоящем сервере: бэкап, плагин авторизации с Modrinth,
+/// перенос вещей игрока, запуск с плагином и выключение режима обратно.
+async fn run_pirate(loader: Loader, plugin_marker: &str) {
+    let shared = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("hearth-live");
+    let servers = tempfile::tempdir().unwrap();
+    let paths = Paths::new(shared.join("config"), shared.join("data"));
+    let http = Http::new(paths.cache_dir()).unwrap();
+    let sink = Arc::new(PrintSink::default());
+    let manager = test_manager(&paths, &http, servers.path(), sink.clone());
+    let version = providers::list_versions(&http, loader, false).await.unwrap()[0].id.clone();
+    println!("== пиратский режим {loader:?} {version}");
+    let id = manager
+        .create(CreateServerRequest {
+            name: format!("Пираты {loader:?}"),
+            loader,
+            game_version: version,
+            memory_mb: 2048,
+            port: Some(free_port()),
+            game_mode: GameMode::Creative,
+            difficulty: Difficulty::Peaceful,
+            max_players: 2,
+            seed: Some("hearth".into()),
+            eula_accepted: true,
+        })
+        .await
+        .unwrap()
+        .id;
+
+    // Первый запуск в обычном режиме: создаётся мир.
+    manager.start(&id).await.unwrap();
+    wait_running(&manager, &id).await;
+    manager.stop(&id, STOP_TIMEOUT).await.unwrap();
+
+    // Будто на сервере уже играл лицензионный Notch.
+    let game = manager.store().game_dir(&id);
+    let online = "069a79f4-44e9-4726-a5be-fca90e38aaf5";
+    std::fs::write(game.join("usercache.json"), format!(r#"[{{"name":"Notch","uuid":"{online}","expiresOn":"2099-01-01 00:00:00 +0000"}}]"#)).unwrap();
+    std::fs::create_dir_all(game.join("world/playerdata")).unwrap();
+    std::fs::write(game.join(format!("world/playerdata/{online}.dat")), b"inventory").unwrap();
+
+    let on = manager.set_pirate_mode(&id, true, false).await.unwrap();
+    println!("== включено: {:?} бэкап {:?} перенесено {}", on.auth, on.backup, on.migrated);
+    assert!(on.auth.is_some(), "плагин авторизации поставлен");
+    assert!(on.backup.as_deref().is_some_and(|b| std::path::Path::new(b).is_file()), "бэкап сделан");
+    assert_eq!(on.migrated, 1);
+    let offline = pirate::offline_uuid("Notch");
+    assert!(game.join(format!("world/playerdata/{offline}.dat")).is_file(), "вещи Notch перенесены");
+    let props = std::fs::read_to_string(game.join("server.properties")).unwrap();
+    assert!(props.contains("online-mode=false") && props.contains("enforce-secure-profile=false"));
+
+    // Сервер запускается с плагином авторизации.
+    manager.start(&id).await.unwrap();
+    wait_running(&manager, &id).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let console = manager.console(&id);
+    assert!(
+        console.iter().any(|l| l.text.to_lowercase().contains(plugin_marker)),
+        "в логе видно, что {plugin_marker} загрузился"
+    );
+    manager.stop(&id, STOP_TIMEOUT).await.unwrap();
+
+    if loader == Loader::Paper {
+        // Со второго запуска AuthMe говорит по-русски.
+        manager.start(&id).await.unwrap();
+        wait_running(&manager, &id).await;
+        manager.stop(&id, STOP_TIMEOUT).await.unwrap();
+        assert!(manager.get(&id).unwrap().meta.auth_lang_set);
+        let cfg = std::fs::read_to_string(game.join("plugins/AuthMe/config.yml")).unwrap();
+        assert!(cfg.contains("messagesLanguage: ru"));
+    }
+
+    // Обратно: плагин убран, online-mode включён, вещи Notch вернулись на лицензионный UUID.
+    let off = manager.set_pirate_mode(&id, false, false).await.unwrap();
+    assert!(off.meta.auth_plugin.is_none() && !off.meta.pirate_mode);
+    assert_eq!(off.migrated, 1, "вещи вернулись на лицензионный UUID (Mojang API)");
+    assert!(game.join(format!("world/playerdata/{online}.dat")).is_file());
+    let props = std::fs::read_to_string(game.join("server.properties")).unwrap();
+    assert!(props.contains("online-mode=true"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_pirate_paper() {
+    run_pirate(Loader::Paper, "authme").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_pirate_fabric() {
+    run_pirate(Loader::Fabric, "easyauth").await;
 }
 
 fn free_port() -> u16 {
@@ -43,7 +152,7 @@ async fn run_server(loader: Loader) {
     let paths = Paths::new(shared.join("config"), shared.join("data"));
     let http = Http::new(paths.cache_dir()).unwrap();
     let sink = Arc::new(PrintSink::default());
-    let manager = ServerManager::new(&paths, http.clone(), servers.path().to_path_buf(), sink.clone());
+    let manager = test_manager(&paths, &http, servers.path(), sink.clone());
 
     let versions = providers::list_versions(&http, loader, false).await.unwrap();
     let version = versions.first().expect("есть хотя бы одна версия").id.clone();

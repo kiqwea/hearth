@@ -22,4 +22,17 @@ playit: PlayitTunnel | null,
 /**
  * Доступ для друзей напрямую: Hearth открывает порт на роутере (UPnP).
  */
-directAccess: boolean, };
+directAccess: boolean, 
+/**
+ * Пиратский режим: вход с нелицензионных клиентов (`online-mode=false`).
+ */
+pirateMode: boolean, 
+/**
+ * Файл плагина/мода авторизации, который поставил Hearth (чтобы убрать его
+ * при выключении режима). `null` — авторизации нет.
+ */
+authPlugin: string | null, 
+/**
+ * AuthMe уже переключён на русский язык.
+ */
+authLangSet: boolean, };

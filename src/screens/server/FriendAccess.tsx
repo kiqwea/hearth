@@ -64,7 +64,12 @@ export function FriendAccess({ server }: { server: ServerSummary }) {
             </Button>
           )}
         </span>
-        {address && <span className="text-[13px] text-muted">{t.access.howTo}</span>}
+        {address && (
+          <span className="text-[13px] text-muted">
+            {t.access.howTo} {t.access.selfHint}{" "}
+            <span className="font-mono selectable text-soft">{meta.port === 25565 ? "localhost" : `localhost:${meta.port}`}</span>
+          </span>
+        )}
         {state !== "failed" && (
           <span className="text-[13px] text-muted">
             {t.access.directHint}{" "}
@@ -181,7 +186,12 @@ export function FriendAccess({ server }: { server: ServerSummary }) {
             </Button>
           )}
         </span>
-        {address && <span className="text-[13px] text-muted">{t.access.howTo}</span>}
+        {address && (
+          <span className="text-[13px] text-muted">
+            {t.access.howTo} {t.access.selfHint}{" "}
+            <span className="font-mono selectable text-soft">{meta.port === 25565 ? "localhost" : `localhost:${meta.port}`}</span>
+          </span>
+        )}
         {playit?.notices
           .filter((n) => n.important)
           .slice(0, 1)

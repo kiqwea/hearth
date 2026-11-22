@@ -62,6 +62,10 @@ pub enum Error {
     #[error("Подключение к playit.gg больше не действует (например, агента удалили в аккаунте playit). Подключите playit заново.")]
     PlayitKeyInvalid,
 
+    /// Плагин авторизации для пиратского режима недоступен под эту версию игры.
+    #[error("{0}")]
+    AuthUnavailable(String),
+
     #[error("{0}")]
     InvalidInput(String),
 
@@ -97,6 +101,7 @@ impl Error {
             Error::StopTimeout => "stopTimeout",
             Error::PlayitNotLinked => "playitNotLinked",
             Error::PlayitKeyInvalid => "playitKeyInvalid",
+            Error::AuthUnavailable(_) => "authUnavailable",
             Error::InvalidInput(_) => "invalidInput",
             Error::Other(_) => "other",
         }

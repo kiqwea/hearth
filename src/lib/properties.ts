@@ -156,7 +156,11 @@ export const PROPERTY_GROUPS: PropertyGroup[] = [
   },
 ];
 
-/** Параметры, которые редактируются в других местах (motd — в «Основном»). */
-export const HANDLED_ELSEWHERE = new Set(["motd"]);
+/**
+ * Параметры, которые редактируются в других местах: motd — в «Основном»,
+ * online-mode и enforce-secure-profile — переключателем «Пиратские клиенты»
+ * (он ещё ставит авторизацию и переносит вещи игроков).
+ */
+export const HANDLED_ELSEWHERE = new Set(["motd", "online-mode", "enforce-secure-profile"]);
 
 export const KNOWN_KEYS = new Set(PROPERTY_GROUPS.flatMap((g) => g.items.map((i) => i.key)));

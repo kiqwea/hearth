@@ -9,7 +9,7 @@ use super::AppState;
 use crate::config::AppConfig;
 use crate::error::{Error, Result};
 use crate::java::InstalledJava;
-use crate::manager::{DirectAttempt, ServerSummary, STOP_TIMEOUT};
+use crate::manager::{DirectAttempt, PirateResult, ServerSummary, STOP_TIMEOUT};
 use crate::process::ConsoleLine;
 use crate::providers::{self, GameVersion, Loader};
 use crate::servers::{self, CreateServerRequest, PropertyEntry, ServerMeta, ServerPatch};
@@ -49,7 +49,23 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         enable_friend_access,
         disable_friend_access,
         try_direct_access,
+        set_pirate_mode,
     ]
+}
+
+/// Вход с пиратских клиентов: бэкап, плагин авторизации, перенос вещей игроков.
+#[tauri::command]
+async fn set_pirate_mode(
+    state: State<'_, AppState>,
+    id: String,
+    enable: bool,
+    allow_without_auth: bool,
+) -> Result<PirateResult> {
+    state
+        .manager
+        .set_pirate_mode(&id, enable, allow_without_auth)
+        .await
+        .inspect_err(|e| tracing::warn!("Пиратский режим сервера {id}: {e}"))
 }
 
 /// Сначала пробуем без посредников: проброс порта на роутере.

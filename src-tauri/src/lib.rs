@@ -2,6 +2,7 @@
 //!
 //! Ядро (всё, кроме `app`) не зависит от Tauri и тестируется отдельно.
 
+pub mod backups;
 pub mod config;
 pub mod direct;
 pub mod error;
@@ -9,8 +10,10 @@ pub mod events;
 pub mod fsx;
 pub mod java;
 pub mod manager;
+pub mod modrinth;
 pub mod net;
 pub mod paths;
+pub mod pirate;
 pub mod process;
 pub mod providers;
 pub mod servers;

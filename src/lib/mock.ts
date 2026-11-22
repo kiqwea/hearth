@@ -53,6 +53,9 @@ function meta(partial: Partial<ServerMeta> & Pick<ServerMeta, "id" | "name" | "l
     createdAt: new Date().toISOString(),
     playit: null,
     directAccess: false,
+    pirateMode: false,
+    authPlugin: null,
+    authLangSet: false,
     ...partial,
   };
 }
@@ -335,6 +338,23 @@ export function createMockApi(): HearthApi {
     enableFriendAccess: async (id) => {
       if (!playit.linked) throw { kind: "playitNotLinked", message: "Сначала подключите playit.gg" };
       return createTunnel(id);
+    },
+    setPirateMode: async (id, enable, allowWithoutAuth) => {
+      const s = servers.get(id)!;
+      const plugin = s.meta.loader === "paper" ? "AuthMe Reloaded" : s.meta.loader === "fabric" ? "EasyAuth" : null;
+      if (enable && !plugin && !allowWithoutAuth) {
+        throw { kind: "authUnavailable", message: "Для Vanilla нет плагинов авторизации" };
+      }
+      await wait(1800);
+      s.meta.pirateMode = enable;
+      s.meta.authPlugin = enable && plugin ? `${plugin.split(" ")[0]}.jar` : null;
+      s.props["online-mode"] = String(!enable);
+      return {
+        meta: { ...s.meta },
+        backup: "C:\\Users\\…\\backups\\2026-11-22_pirate-on.zip",
+        migrated: 3,
+        auth: enable ? plugin : null,
+      };
     },
     tryDirectAccess: async (id) => {
       const s = servers.get(id)!;

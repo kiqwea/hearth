@@ -8,6 +8,7 @@ import { api } from "../../lib/api";
 import { gb, isActive } from "../../lib/format";
 import { HANDLED_ELSEWHERE, KNOWN_KEYS, PROPERTY_GROUPS, type PropertyDef } from "../../lib/properties";
 import { useHearth } from "../../lib/store";
+import { PirateMode } from "./PirateMode";
 
 const fieldClass = "h-10 px-3 rounded-[9px] border border-line-strong bg-bg text-ink placeholder:text-faint";
 
@@ -153,11 +154,7 @@ export function SettingsTab({ server }: { server: ServerSummary }) {
           {g.items.map((def) => (
             <PropertyRow key={def.key} def={def} value={value(def)} onChange={(v) => set(def.key, v)} />
           ))}
-          {g.title === "Доступ" && (
-            <Row label="Вход с пиратских клиентов" hint={t.settings.pirateSoon}>
-              <Switch checked={false} onChange={() => {}} label="Вход с пиратских клиентов" disabled />
-            </Row>
-          )}
+          {g.title === "Доступ" && <PirateMode server={server} onChanged={() => void load()} />}
         </Group>
       ))}
 

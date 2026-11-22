@@ -31,7 +31,11 @@ use crate::providers;
 use crate::servers::{
     self, CreateServerRequest, PlayitTunnel, PropertyEntry, ServerMeta, ServerPatch, ServerStore,
 };
+use uuid::Uuid;
+
+use crate::backups;
 use crate::direct::{DirectInfo, DirectManager, DirectState};
+use crate::pirate;
 use crate::tunnel::api::PlayitApi;
 use crate::tunnel::secret::SecretStore;
 use crate::tunnel::PlayitManager;
@@ -47,6 +51,20 @@ pub struct ServerSummary {
     pub status: ServerStatus,
     /// Прямое подключение (если включено и Hearth уже что-то о нём знает).
     pub direct: Option<DirectInfo>,
+}
+
+/// Итог переключения пиратского режима.
+#[derive(Serialize, Clone, Debug, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PirateResult {
+    pub meta: ServerMeta,
+    /// Путь к бэкапу мира, сделанному перед переключением.
+    pub backup: Option<String>,
+    /// Скольким игрокам перенесли вещи и права на новые UUID.
+    pub migrated: u32,
+    /// Какой плагин авторизации поставлен.
+    pub auth: Option<String>,
 }
 
 /// Итог попытки включить прямое подключение.
@@ -346,6 +364,108 @@ impl ServerManager {
         Ok(meta)
     }
 
+    // ---- пиратский режим ----
+
+    /// Включает или выключает вход с пиратских клиентов. Сервер должен быть
+    /// остановлен. Порядок: бэкап мира → плагин авторизации → перенос вещей
+    /// игроков на новые UUID → server.properties.
+    ///
+    /// `allow_without_auth`: пользователь подтвердил, что согласен без защиты
+    /// (Vanilla, или плагин не вышел под эту версию игры).
+    pub async fn set_pirate_mode(&self, id: &str, enable: bool, allow_without_auth: bool) -> Result<PirateResult> {
+        let _guard = self.begin_busy(id)?;
+        let store = self.store();
+        let mut meta = store.load(id)?;
+        let mut props = store.read_properties(id)?;
+        let game_dir = store.game_dir(id);
+        let level = props.get("level-name").unwrap_or("world").to_string();
+        if meta.pirate_mode == enable {
+            return Ok(PirateResult { meta, backup: None, migrated: 0, auth: None });
+        }
+
+        let plugin = pirate::auth_plugin_for(meta.loader);
+        if enable && plugin.is_none() && !allow_without_auth {
+            return Err(Error::AuthUnavailable(
+                "Для Vanilla нет плагинов авторизации: любой сможет зайти под чужим ником".into(),
+            ));
+        }
+
+        let backup = backups::backup_world(
+            &game_dir,
+            &level,
+            &store.backups_dir(id),
+            if enable { "pirate-on" } else { "pirate-off" },
+        )
+        .await?;
+
+        let mut auth = None;
+        if enable {
+            if let Some(plugin) = &plugin {
+                match pirate::install_auth(&self.http, plugin, &game_dir, &meta.game_version).await {
+                    Ok(file) => {
+                        meta.auth_plugin = Some(file);
+                        auth = Some(plugin.title.to_string());
+                    }
+                    Err(e @ Error::AuthUnavailable(_)) if !allow_without_auth => return Err(e),
+                    Err(Error::AuthUnavailable(_)) => {}
+                    Err(e) => return Err(e),
+                }
+            }
+        } else if let (Some(file), Some(folder)) = (meta.auth_plugin.take(), pirate::auth_folder(&game_dir, meta.loader)) {
+            // Данные плагина (пароли) остаются: при повторном включении они пригодятся.
+            let _ = tokio::fs::remove_file(folder.join(file)).await;
+        }
+
+        // Вещи, достижения и права игроков: на новые UUID.
+        let players = pirate::known_players(&game_dir);
+        let map: HashMap<Uuid, Uuid> = if enable {
+            players.iter().map(|(name, uuid)| (*uuid, pirate::offline_uuid(name))).collect()
+        } else {
+            let names: Vec<String> = players.iter().map(|(n, _)| n.clone()).collect();
+            match pirate::online_uuids(&self.http, &names).await {
+                // В пиратском режиме файлы игрока лежат под UUID, посчитанным из ника.
+                Ok(online) => players
+                    .iter()
+                    .filter_map(|(name, _)| Some((pirate::offline_uuid(name), *online.get(&name.to_lowercase())?)))
+                    .collect(),
+                Err(e) => {
+                    tracing::warn!("Не удалось узнать лицензионные UUID, вещи игроков не перенесены: {e}");
+                    HashMap::new()
+                }
+            }
+        };
+        let map: HashMap<Uuid, Uuid> = map.into_iter().filter(|(a, b)| a != b).collect();
+        let migrated = {
+            let world = game_dir.join(&level);
+            let gd = game_dir.clone();
+            let map = map.clone();
+            tokio::task::spawn_blocking(move || {
+                let n = pirate::migrate_player_files(&world, &map);
+                pirate::migrate_lists(&gd, &map);
+                n
+            })
+            .await?
+        };
+
+        props.set("online-mode", if enable { "false" } else { "true" });
+        // Пиратские клиенты не подписывают чат: без этого им нельзя писать сообщения.
+        props.set("enforce-secure-profile", if enable { "false" } else { "true" });
+        store.write_properties(id, &props).await?;
+
+        meta.pirate_mode = enable;
+        store.save(&meta).await?;
+        tracing::info!(
+            "Пиратский режим сервера {id}: {} (авторизация: {auth:?}, перенесено игроков: {migrated})",
+            if enable { "включён" } else { "выключен" }
+        );
+        Ok(PirateResult {
+            meta,
+            backup: backup.map(|p| p.to_string_lossy().into_owned()),
+            migrated: migrated as u32,
+            auth,
+        })
+    }
+
     /// Пробует прямое подключение (проброс порта на роутере). Если получилось,
     /// сервер дальше работает напрямую, без playit. Если нет, в ответе причина,
     /// и интерфейс предлагает playit.
@@ -637,6 +757,11 @@ impl ServerManager {
         }
 
         servers::write_eula(&game_dir, accepted_at).await?;
+        // AuthMe создаёт config.yml при первом запуске: со второго запуска он говорит по-русски.
+        if meta.pirate_mode && meta.loader == providers::Loader::Paper && !meta.auth_lang_set && pirate::authme_russian(&game_dir) {
+            meta.auth_lang_set = true;
+            store.save(&meta).await?;
+        }
         let required = meta
             .java_major
             .unwrap_or_else(|| java::fallback_major(&meta.game_version));
