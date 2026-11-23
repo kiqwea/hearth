@@ -38,6 +38,7 @@ pub struct VersionFile {
 #[derive(Deserialize, Debug, Clone)]
 pub struct Hashes {
     pub sha1: Option<String>,
+    pub sha512: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -64,6 +65,8 @@ pub struct ModFile {
     pub checksum: Option<Checksum>,
     /// Обязательные зависимости (id проектов Modrinth).
     pub required: Vec<String>,
+    /// Канал: `release`, `beta` или `alpha`.
+    pub channel: String,
     /// Релиз, а не альфа или бета.
     pub stable: bool,
 }
@@ -76,6 +79,7 @@ impl ModFile {
             version_id: v.id.clone(),
             version: v.version_number.clone(),
             stable: v.version_type == "release",
+            channel: v.version_type.clone(),
             url: file.url.clone(),
             filename: file.filename.clone(),
             checksum: file.hashes.sha1.clone().map(Checksum::Sha1),

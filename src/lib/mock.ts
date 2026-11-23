@@ -642,6 +642,25 @@ export function createMockApi(): HearthApi {
     pregenCancel: async (id) => {
       pregen.delete(id);
     },
+    packPreview: async (id, options) => {
+      await wait(500);
+      const list = modsOf(id);
+      const mods = list
+        .filter((m) => m.clientSide === "required" || (options.optional && m.clientSide === "optional" && m.title !== "Lithium"))
+        .map((m) => m.title);
+      if (options.optifine) mods.push("Sodium", "Iris Shaders", "Entity Culling", "ImmediatelyFast", "FerriteCore");
+      return {
+        mods: [...new Set(mods)].sort(),
+        skipped: list.some((m) => !m.projectId) ? ["my-local-mod: файл не с Modrinth, если он нужен игрокам, передайте его отдельно"] : [],
+        optionalAvailable: list.filter((m) => m.clientSide === "optional" && m.title !== "Lithium").length,
+        address: "lime-forest.joinmc.link",
+      };
+    },
+    exportPack: async () => {
+      await wait(1500);
+      return { mods: [], skipped: [], optionalAvailable: 0, address: null };
+    },
+    pickSave: async (name) => `C:\\Users\\Дима\\Downloads\\${name}`,
     checkServerUpdate: async (id) => {
       await wait(600);
       const m = servers.get(id)!.meta;

@@ -11,6 +11,9 @@ import type { AppConfig } from "../bindings/AppConfig";
 import type { BackupInfo } from "../bindings/BackupInfo";
 import type { ModList } from "../bindings/ModList";
 import type { ModSearch } from "../bindings/ModSearch";
+import type { PackFormat } from "../bindings/PackFormat";
+import type { PackOptions } from "../bindings/PackOptions";
+import type { PackSummary } from "../bindings/PackSummary";
 import type { PregenStatus } from "../bindings/PregenStatus";
 import type { PresetResult } from "../bindings/PresetResult";
 import type { UpdateInfo } from "../bindings/UpdateInfo";
@@ -129,6 +132,12 @@ export interface HearthApi {
   pregenStatus(id: string): Promise<PregenStatus>;
   pregenCancel(id: string): Promise<void>;
 
+  // Сборка модов для друзей (Fabric)
+  packPreview(id: string, options: PackOptions): Promise<PackSummary>;
+  exportPack(id: string, options: PackOptions, format: PackFormat, dest: string): Promise<PackSummary>;
+  /** Окно «Сохранить как» с нужным расширением. `null`, если пользователь передумал. */
+  pickSave(defaultName: string, extension: string, label: string): Promise<string | null>;
+
   // Обновление сервера
   checkServerUpdate(id: string): Promise<UpdateInfo>;
   planUpdate(id: string, target: string): Promise<UpdatePlan>;
@@ -239,6 +248,12 @@ const tauriApi: HearthApi = {
   pregenStart: (id, radius) => invoke("pregen_start", { id, radius }),
   pregenStatus: (id) => invoke("pregen_status", { id }),
   pregenCancel: (id) => invoke("pregen_cancel", { id }),
+  packPreview: (id, options) => invoke("pack_preview", { id, options }),
+  exportPack: (id, options, format, dest) => invoke("export_pack", { id, options, format, dest }),
+  pickSave: async (defaultName, extension, label) => {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    return save({ defaultPath: defaultName, filters: [{ name: label, extensions: [extension] }] });
+  },
   checkServerUpdate: (id) => invoke("check_update", { id }),
   planUpdate: (id, target) => invoke("plan_update", { id, target }),
   upgradeServer: (id, target) => invoke("upgrade_server", { id, target }),

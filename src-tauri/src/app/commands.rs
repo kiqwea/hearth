@@ -7,6 +7,7 @@ use tauri::State;
 
 use super::AppState;
 use crate::backups::{BackupInfo, BackupKind, SavedWorld};
+use crate::friendpack::{PackFormat, PackOptions, PackSummary};
 use crate::mods::{self, ModList, ModSearch};
 use crate::presets::{PregenStatus, PresetResult};
 use crate::upgrade::{UpdateInfo, UpdatePlan, UpdateResult};
@@ -81,6 +82,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         check_update,
         plan_update,
         upgrade_server,
+        pack_preview,
+        export_pack,
     ]
 }
 
@@ -478,4 +481,26 @@ async fn upgrade_server(state: State<'_, AppState>, id: String, target: Option<S
         .update_server(&id, target.as_deref())
         .await
         .inspect_err(|e| tracing::warn!("Обновление сервера {id}: {e}"))
+}
+
+/// Что попадёт в сборку модов для друзей.
+#[tauri::command]
+async fn pack_preview(state: State<'_, AppState>, id: String, options: PackOptions) -> Result<PackSummary> {
+    state.manager.pack_preview(&id, options).await
+}
+
+/// Собирает сборку модов для друзей (.mrpack или zip) в выбранный файл.
+#[tauri::command]
+async fn export_pack(
+    state: State<'_, AppState>,
+    id: String,
+    options: PackOptions,
+    format: PackFormat,
+    dest: String,
+) -> Result<PackSummary> {
+    state
+        .manager
+        .export_pack(&id, options, format, &dest)
+        .await
+        .inspect_err(|e| tracing::warn!("Сборка для друзей сервера {id}: {e}"))
 }

@@ -15,6 +15,7 @@ import { t } from "../../i18n";
 import { api, errorMessage, openExternal } from "../../lib/api";
 import { formatSize, isActive, isPaperLike } from "../../lib/format";
 import { useHearth } from "../../lib/store";
+import { FriendPack } from "./FriendPack";
 import { PregenCard, PresetCard } from "./ServerBoost";
 
 /** Chunky на Modrinth: нужен для предгенерации мира. */
@@ -173,6 +174,9 @@ export function ModsTab({ server }: { server: ServerSummary }) {
         )}
       </Card>
 
+      {meta.loader === "fabric" && list && (
+        <FriendPack server={server} modsKey={list.items.map((m) => m.file).join("|")} />
+      )}
       <PresetCard server={server} onApplied={() => void load()} />
       <PregenCard
         server={server}

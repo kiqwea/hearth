@@ -42,6 +42,11 @@ impl Http {
         Ok(Self { client, cache_dir })
     }
 
+    /// Папка кэша (там же кэш скачанных модов для сборок).
+    pub fn cache_dir(&self) -> &Path {
+        &self.cache_dir
+    }
+
     /// Сам клиент: для API, которым нужен POST (например, playit.gg).
     pub fn client(&self) -> &reqwest::Client {
         &self.client

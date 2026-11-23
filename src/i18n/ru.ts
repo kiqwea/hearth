@@ -310,6 +310,27 @@ export const ru = {
     by: (author: string) => `от ${author}`,
   },
 
+  pack: {
+    title: "Сборка для друзей",
+    hint: "Друзьям нужны те же моды, что и серверу. Hearth соберёт их в один файл: друг откроет его в лаунчере и сразу сможет зайти.",
+    optional: (n: number) => `Моды «игрокам по желанию» (${n})`,
+    optionalHint: "Например, голосовой чат: без него зайти можно, но не будет его возможностей",
+    optifine: "Замена OptiFine",
+    optifineHint: "Sodium, Iris (шейдеры), Entity Culling, ImmediatelyFast, FerriteCore: игра быстрее и красивее",
+    counting: "Считаю, что попадёт в сборку…",
+    contents: (n: number) => `В сборке ${n} ${plural(n, "мод", "мода", "модов")}`,
+    empty: "Игрокам ничего ставить не нужно: все моды сервера работают только на нём.",
+    address: (a: string) => `Сервер ${a} сразу появится в списке серверов (в .mrpack).`,
+    mrpack: "Скачать .mrpack",
+    mrpackHint: "Prism Launcher, Modrinth App",
+    zip: "Скачать zip",
+    zipHint: "TLauncher и другие лаунчеры",
+    building: "Собираю…",
+    saved: "Сборка сохранена: отправьте файл друзьям",
+    zipLabel: "Zip-архив",
+    mrpackLabel: "Сборка Modrinth",
+  },
+
   upgrade: {
     title: "Версия сервера",
     current: (title: string, build: string | null, fabric: boolean) =>

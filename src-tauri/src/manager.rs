@@ -35,6 +35,7 @@ use uuid::Uuid;
 
 use crate::backups::{self, BackupInfo, BackupKind, SavedWorld, WorldSource};
 use crate::direct::{DirectInfo, DirectManager, DirectState};
+use crate::friendpack::{self, PackFormat, PackOptions, PackSummary};
 use crate::mods::{self, ModList, ModSearch};
 use crate::pirate;
 use crate::presets::{self, PregenStatus, PresetResult};
@@ -606,6 +607,42 @@ impl ServerManager {
         tracing::info!("Сервер {id}: поставлено {files:?}");
         self.follow_auth_plugin(&store, id, &files).await?;
         Ok(files.into_iter().map(|f| f.file).collect())
+    }
+
+    // ---- сборка модов для друзей ----
+
+    /// Адрес для друзей, если Hearth его знает: постоянный playit или прямой.
+    fn friend_address(&self, meta: &ServerMeta) -> Option<String> {
+        if let Some(address) = meta.playit.as_ref().and_then(|t| self.playit.address(&t.tunnel_id)) {
+            return Some(address);
+        }
+        let host = self.direct.info(&meta.id).and_then(|d| d.address)?;
+        Some(if meta.port == servers::DEFAULT_PORT || host.contains(':') { host } else { format!("{host}:{}", meta.port) })
+    }
+
+    /// Что попадёт в сборку (без скачивания).
+    pub async fn pack_preview(&self, id: &str, opts: PackOptions) -> Result<PackSummary> {
+        let store = self.store();
+        let meta = store.load(id)?;
+        friendpack::preview(&self.http, &meta, &store.game_dir(id), opts, self.friend_address(&meta)).await
+    }
+
+    /// Собирает файл сборки для друзей в `dest`.
+    pub async fn export_pack(&self, id: &str, opts: PackOptions, format: PackFormat, dest: &str) -> Result<PackSummary> {
+        let store = self.store();
+        let meta = store.load(id)?;
+        let summary = friendpack::build(
+            &self.http,
+            &meta,
+            &store.game_dir(id),
+            opts,
+            format,
+            std::path::Path::new(dest),
+            self.friend_address(&meta),
+        )
+        .await?;
+        tracing::info!("Сервер {id}: сборка для друзей ({format:?}): {:?}", summary.mods);
+        Ok(summary)
     }
 
     // ---- обновление сервера ----
