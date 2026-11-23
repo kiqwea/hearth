@@ -15,6 +15,7 @@ pub mod modrinth;
 pub mod net;
 pub mod paths;
 pub mod pirate;
+pub mod presets;
 pub mod players;
 pub mod process;
 pub mod providers;

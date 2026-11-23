@@ -121,6 +121,7 @@ export function createMockApi(): HearthApi {
     }
     return backups.get(id)!;
   };
+  const pregen = new Map<string, number>();
   const mods = new Map<string, InstalledMod[]>();
   const modsOf = (id: string) => {
     if (!mods.has(id)) {
@@ -607,6 +608,40 @@ export function createMockApi(): HearthApi {
       mods.set(id, modsOf(id).filter((m) => m.file !== file));
     },
     openModsFolder: async () => {},
+    applyPreset: async (id) => {
+      await wait(1500);
+      const fabric = servers.get(id)!.meta.loader === "fabric";
+      return fabric
+        ? {
+            installed: ["ferritecore-9.0.0-fabric.jar", "krypton-0.3.2.jar", "spark-1.10.187-fabric.jar"],
+            already: ["Lithium"],
+            skipped: ["ModernFix: нет версии под 26.3"],
+            settings: ["Дальность симуляции: 10 → 8 чанков (дальность прорисовки не меняется)", "Чанки записываются на диск без ожидания"],
+            paperConfigMissing: false,
+          }
+        : {
+            installed: [],
+            already: [],
+            skipped: [],
+            settings: ["Быстрые взрывы", "Не больше 16 стрел на чанк", "Трава разрастается реже"],
+            paperConfigMissing: false,
+          };
+    },
+    pregenStart: async (id) => {
+      pregen.set(id, Date.now());
+      return { running: true, percent: 0, eta: "0:00:20", message: "" };
+    },
+    pregenStatus: async (id) => {
+      if (!modsOf(id).some((m) => m.projectId === "fALzjamp")) throw { kind: "invalidInput", message: "Для предгенерации нужен Chunky" };
+      const started = pregen.get(id);
+      if (!started) return { running: false, percent: null, eta: null, message: "No tasks running." };
+      const pct = Math.min(100, ((Date.now() - started) / 20_000) * 100);
+      if (pct >= 100) pregen.delete(id);
+      return { running: pct < 100, percent: pct, eta: `0:00:${String(Math.max(0, Math.round(20 - pct / 5))).padStart(2, "0")}`, message: "" };
+    },
+    pregenCancel: async (id) => {
+      pregen.delete(id);
+    },
     pickZip: async () => "C:\\Users\\Дима\\Downloads\\SkyBlock.zip",
     pickFolder: async () => null,
     pickSaveZip: async (name) => `C:\\Users\\Дима\\Downloads\\${name}`,
@@ -658,6 +693,7 @@ const MOCK_MODS: ModHit[] = [
   hit("9eGKb6K1", "Simple Voice Chat", "A working voice chat in Minecraft!", 40_000_000, "required"),
   hit("LNytGWDc", "Create", "Aesthetic technology that empowers the player.", 30_000_000, "required"),
   hit("1u6JkXh5", "WorldEdit", "A Minecraft Map Editor... that runs in-game!", 12_000_000, "optional"),
+  hit("fALzjamp", "Chunky", "Pre-generates chunks, quickly and efficiently.", 9_000_000, "serverOnly"),
 ];
 
 const MOCK_PLUGINS: ModHit[] = [
@@ -666,4 +702,5 @@ const MOCK_PLUGINS: ModHit[] = [
   hit("1u6JkXh5", "WorldEdit", "A Minecraft Map Editor... that runs in-game!", 12_000_000, "serverOnly"),
   hit("Lu3KuzdV", "CoreProtect", "Fast, efficient block logging, rollback and restore.", 900_000, "serverOnly"),
   hit("swbUV1cr", "BlueMap", "A 3D map of your Minecraft worlds.", 850, "serverOnly"),
+  hit("fALzjamp", "Chunky", "Pre-generates chunks, quickly and efficiently.", 9_000_000, "serverOnly"),
 ];

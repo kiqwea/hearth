@@ -251,7 +251,7 @@ pub async fn search(http: &Http, loader: Loader, game_version: &str, query: &str
 }
 
 /// Подходящий файл проекта: сначала сборка под «родной» загрузчик, потом совместимые.
-async fn find_file(http: &Http, loader: Loader, game_version: &str, project: &str) -> Result<Option<ModFile>> {
+pub async fn find_file(http: &Http, loader: Loader, game_version: &str, project: &str) -> Result<Option<ModFile>> {
     let loaders = modrinth_loaders(loader);
     if let Some(file) = modrinth::latest_file(http, project, &loaders[..1], game_version).await? {
         return Ok(Some(file));

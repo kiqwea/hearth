@@ -64,6 +64,8 @@ pub struct ModFile {
     pub checksum: Option<Checksum>,
     /// Обязательные зависимости (id проектов Modrinth).
     pub required: Vec<String>,
+    /// Релиз, а не альфа или бета.
+    pub stable: bool,
 }
 
 impl ModFile {
@@ -73,6 +75,7 @@ impl ModFile {
             project_id: v.project_id.clone(),
             version_id: v.id.clone(),
             version: v.version_number.clone(),
+            stable: v.version_type == "release",
             url: file.url.clone(),
             filename: file.filename.clone(),
             checksum: file.hashes.sha1.clone().map(Checksum::Sha1),

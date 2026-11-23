@@ -37,6 +37,7 @@ use crate::backups::{self, BackupInfo, BackupKind, SavedWorld, WorldSource};
 use crate::direct::{DirectInfo, DirectManager, DirectState};
 use crate::mods::{self, ModList, ModSearch};
 use crate::pirate;
+use crate::presets::{self, PregenStatus, PresetResult};
 use crate::players::{self, PlayerAction, PlayerInfo, ServerStats, StatsEvent};
 use crate::rcon::{self, Rcon};
 use crate::tunnel::api::PlayitApi;
@@ -630,6 +631,122 @@ impl ServerManager {
         let path = mods::mod_path(&store.game_dir(id), meta.loader, file)?;
         tokio::fs::remove_file(path).await?;
         tracing::info!("Сервер {id}: удалён {file}");
+        Ok(())
+    }
+
+    // ---- пресет «Производительность» и предгенерация ----
+
+    /// Моды-оптимизации (Fabric), server.properties и настройки Paper.
+    /// Всё заработает после перезапуска. Моды без стабильной версии под эту
+    /// версию игры пропускаются с объяснением.
+    pub async fn apply_preset(&self, id: &str) -> Result<PresetResult> {
+        let store = self.store();
+        let meta = store.load(id)?;
+        let mut result = PresetResult::default();
+
+        if meta.loader == providers::Loader::Fabric {
+            for (project, title) in presets::FABRIC_MODS {
+                match mods::find_file(&self.http, meta.loader, &meta.game_version, project).await {
+                    Ok(Some(file)) if file.stable => match self.install_mod(id, project).await {
+                        Ok(files) if files.is_empty() => result.already.push(title.to_string()),
+                        Ok(files) => result.installed.extend(files),
+                        Err(e) => result.skipped.push(format!("{title}: {e}")),
+                    },
+                    Ok(Some(_)) => result.skipped.push(format!("{title}: под {} только тестовая версия", meta.game_version)),
+                    Ok(None) => result.skipped.push(format!("{title}: нет версии под {}", meta.game_version)),
+                    Err(e) => result.skipped.push(format!("{title}: {e}")),
+                }
+            }
+        }
+
+        let mut props = store.read_properties(id)?;
+        let changes = presets::tune_properties(meta.loader, &mut props);
+        if !changes.is_empty() {
+            store.write_properties(id, &props).await?;
+            result.settings.extend(changes);
+        }
+
+        if meta.loader.is_paper_like() {
+            let path = store.game_dir(id).join("config").join("paper-world-defaults.yml");
+            match tokio::fs::read_to_string(&path).await {
+                Ok(mut text) => {
+                    let mut changed = false;
+                    for (key, value, what) in presets::PAPER_WORLD {
+                        if presets::set_yaml_scalar(&mut text, key, value) == Some(true) {
+                            result.settings.push(what.to_string());
+                            changed = true;
+                        }
+                    }
+                    if changed {
+                        crate::fsx::write_atomic(&path, text.as_bytes()).await?;
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => result.paper_config_missing = true,
+                Err(e) => return Err(e.into()),
+            }
+        }
+        tracing::info!("Сервер {id}: пресет «Производительность»: {result:?}");
+        Ok(result)
+    }
+
+    /// Запущенный и полностью загрузившийся сервер, на котором работает Chunky.
+    async fn chunky_server(&self, id: &str) -> Result<Arc<RunningServer>> {
+        let running = self
+            .running(id)
+            .ok_or_else(|| Error::invalid("Запустите сервер, чтобы предгенерировать мир"))?;
+        if self.status(id) != ServerStatus::Running {
+            return Err(Error::invalid("Подождите, пока сервер запустится"));
+        }
+        let reply = Self::rcon_command(&running, "chunky").await?;
+        if is_unknown_command(&reply) {
+            let meta = self.store().load(id)?;
+            let installed = mods::list(&self.http, meta.loader, &meta.game_version, &self.store().game_dir(id))
+                .await
+                .is_ok_and(|l| l.items.iter().any(|m| m.project_id.as_deref() == Some(presets::CHUNKY)));
+            return Err(Error::invalid(if installed {
+                "Chunky поставлен, но ещё не загружен: перезапустите сервер"
+            } else {
+                "Для предгенерации нужен Chunky: поставьте его кнопкой выше"
+            }));
+        }
+        Ok(running)
+    }
+
+    /// Предгенерация мира вокруг точки появления радиусом `radius` блоков.
+    pub async fn pregen_start(&self, id: &str, radius: u32) -> Result<PregenStatus> {
+        if !(100..=50_000).contains(&radius) {
+            return Err(Error::invalid("Радиус: от 100 до 50 000 блоков"));
+        }
+        let running = self.chunky_server(id).await?;
+        for command in ["chunky spawn".to_string(), format!("chunky radius {radius}")] {
+            let reply = Self::rcon_command(&running, &command).await?;
+            tracing::info!("Chunky {command}: {reply}");
+        }
+        let reply = Self::rcon_command(&running, "chunky start").await?;
+        tracing::info!("Chunky start: {reply}");
+        self.push_line(id, ConsoleStream::System, format!("Предгенерация мира: радиус {radius} блоков"));
+        if reply.to_lowercase().contains("already") {
+            return Err(Error::invalid("Предгенерация уже идёт"));
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        self.pregen_status(id).await
+    }
+
+    pub async fn pregen_status(&self, id: &str) -> Result<PregenStatus> {
+        let running = self.chunky_server(id).await?;
+        let reply = Self::rcon_command(&running, "chunky progress").await?;
+        Ok(presets::parse_progress(&reply))
+    }
+
+    pub async fn pregen_cancel(&self, id: &str) -> Result<()> {
+        let running = self.chunky_server(id).await?;
+        let reply = Self::rcon_command(&running, "chunky cancel").await?;
+        tracing::info!("Chunky cancel: {reply}");
+        // Chunky просит подтвердить отмену.
+        if reply.to_lowercase().contains("confirm") {
+            let reply = Self::rcon_command(&running, "chunky confirm").await?;
+            tracing::info!("Chunky confirm: {reply}");
+        }
         Ok(())
     }
 
@@ -1641,4 +1758,10 @@ fn progress_reporter(
             },
         );
     }
+}
+
+/// Ответ сервера на неизвестную команду (Vanilla/Fabric и Paper пишут по-разному).
+fn is_unknown_command(reply: &str) -> bool {
+    let lower = reply.to_lowercase();
+    lower.contains("unknown or incomplete command") || lower.contains("unknown command")
 }

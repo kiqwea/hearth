@@ -15,6 +15,10 @@ import { t } from "../../i18n";
 import { api, errorMessage, openExternal } from "../../lib/api";
 import { formatSize, isActive, isPaperLike } from "../../lib/format";
 import { useHearth } from "../../lib/store";
+import { PregenCard, PresetCard } from "./ServerBoost";
+
+/** Chunky на Modrinth: нужен для предгенерации мира. */
+const CHUNKY = "fALzjamp";
 
 const SIDE_TONE: Record<ClientSide, string> = {
   required: "bg-warn-bg text-warn",
@@ -168,6 +172,14 @@ export function ModsTab({ server }: { server: ServerSummary }) {
           </ul>
         )}
       </Card>
+
+      <PresetCard server={server} onApplied={() => void load()} />
+      <PregenCard
+        server={server}
+        chunkyInstalled={list?.items.some((m) => m.projectId === CHUNKY) ?? false}
+        installing={busy === CHUNKY}
+        onInstallChunky={() => void install(CHUNKY)}
+      />
 
       <Catalog
         serverId={meta.id}

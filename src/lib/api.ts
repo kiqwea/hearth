@@ -11,6 +11,8 @@ import type { AppConfig } from "../bindings/AppConfig";
 import type { BackupInfo } from "../bindings/BackupInfo";
 import type { ModList } from "../bindings/ModList";
 import type { ModSearch } from "../bindings/ModSearch";
+import type { PregenStatus } from "../bindings/PregenStatus";
+import type { PresetResult } from "../bindings/PresetResult";
 import type { SavedWorld } from "../bindings/SavedWorld";
 import type { ConsoleLine } from "../bindings/ConsoleLine";
 import type { CreateServerRequest } from "../bindings/CreateServerRequest";
@@ -117,6 +119,12 @@ export interface HearthApi {
   updateMods(id: string): Promise<string[]>;
   removeMod(id: string, file: string): Promise<void>;
   openModsFolder(id: string): Promise<void>;
+  /** Пресет «Производительность». Заработает после перезапуска. */
+  applyPreset(id: string): Promise<PresetResult>;
+  /** Предгенерация мира через Chunky. Сервер должен работать. */
+  pregenStart(id: string, radius: number): Promise<PregenStatus>;
+  pregenStatus(id: string): Promise<PregenStatus>;
+  pregenCancel(id: string): Promise<void>;
   /** Системные окна выбора файла. `null`, если пользователь передумал. */
   pickZip(): Promise<string | null>;
   pickFolder(): Promise<string | null>;
@@ -218,6 +226,10 @@ const tauriApi: HearthApi = {
   updateMods: (id) => invoke("update_mods", { id }),
   removeMod: (id, file) => invoke("remove_mod", { id, file }),
   openModsFolder: (id) => invoke("open_mods_folder", { id }),
+  applyPreset: (id) => invoke("apply_preset", { id }),
+  pregenStart: (id, radius) => invoke("pregen_start", { id, radius }),
+  pregenStatus: (id) => invoke("pregen_status", { id }),
+  pregenCancel: (id) => invoke("pregen_cancel", { id }),
   pickZip: async () => {
     const { open } = await import("@tauri-apps/plugin-dialog");
     const path = await open({ multiple: false, filters: [{ name: "Zip-архив", extensions: ["zip"] }] });

@@ -573,3 +573,84 @@ async fn live_mods_purpur() {
 async fn live_mods_fabric() {
     run_mods(Loader::Fabric, "gvQqBUqZ", "Lithium").await;
 }
+
+/// Пресет «Производительность» и предгенерация Chunky на настоящем сервере.
+async fn run_preset(loader: Loader) {
+    let shared = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("hearth-live");
+    let servers = tempfile::tempdir().unwrap();
+    let paths = Paths::new(shared.join("config"), shared.join("data"));
+    let http = Http::new(paths.cache_dir()).unwrap();
+    let manager = test_manager(&paths, &http, servers.path(), Arc::new(PrintSink::default()));
+    let version = providers::list_versions(&http, loader, false).await.unwrap()[0].id.clone();
+    println!("== пресет {loader:?} {version}");
+    let id = manager
+        .create(CreateServerRequest {
+            name: format!("Пресет {loader:?}"),
+            loader,
+            game_version: version,
+            memory_mb: 2048,
+            port: Some(free_port()),
+            game_mode: GameMode::Creative,
+            difficulty: Difficulty::Peaceful,
+            max_players: 3,
+            seed: Some("hearth".into()),
+            eula_accepted: true,
+            pirate_mode: false,
+            nick_protection: false,
+        })
+        .await
+        .unwrap()
+        .id;
+    // Первый запуск: Paper создаёт свои файлы настроек.
+    manager.start(&id).await.unwrap();
+    wait_running(&manager, &id).await;
+    // Без Chunky понятная ошибка.
+    let err = manager.pregen_start(&id, 200).await.unwrap_err().to_string();
+    println!("== без Chunky: {err}");
+    assert!(err.contains("Chunky"));
+    manager.stop(&id, STOP_TIMEOUT).await.unwrap();
+
+    let result = manager.apply_preset(&id).await.unwrap();
+    println!("== пресет: {result:#?}");
+    assert!(!result.settings.is_empty());
+    assert!(!result.paper_config_missing);
+    if loader == Loader::Fabric {
+        assert!(result.installed.iter().any(|f| f.contains("lithium")), "Lithium поставлен");
+    } else {
+        assert!(result.settings.len() >= 6, "настройки Paper применены: {:?}", result.settings);
+    }
+    assert!(manager.apply_preset(&id).await.unwrap().settings.is_empty(), "повторно ничего не меняет");
+
+    manager.install_mod(&id, "chunky").await.unwrap();
+    manager.start(&id).await.unwrap();
+    wait_running(&manager, &id).await;
+    let status = manager.pregen_start(&id, 160).await.unwrap();
+    println!("== старт: {status:?}");
+    let started = Instant::now();
+    let last = loop {
+        let s = manager.pregen_status(&id).await.unwrap();
+        println!("== прогресс: {s:?}");
+        if !s.running {
+            break s;
+        }
+        assert!(started.elapsed() < Duration::from_secs(180), "предгенерация слишком долгая");
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    };
+    println!("== итог: {last:?}");
+    for line in manager.console(&id).iter().filter(|l| l.text.contains("Chunky") || l.text.contains("chunky")) {
+        println!("== консоль: {}", line.text);
+    }
+    manager.stop(&id, STOP_TIMEOUT).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_preset_paper() {
+    run_preset(Loader::Paper).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_preset_fabric() {
+    run_preset(Loader::Fabric).await;
+}

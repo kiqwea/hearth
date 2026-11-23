@@ -8,6 +8,7 @@ use tauri::State;
 use super::AppState;
 use crate::backups::{BackupInfo, BackupKind, SavedWorld};
 use crate::mods::{self, ModList, ModSearch};
+use crate::presets::{PregenStatus, PresetResult};
 use crate::config::AppConfig;
 use crate::error::{Error, Result};
 use crate::java::InstalledJava;
@@ -72,6 +73,10 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         update_mods,
         remove_mod,
         open_mods_folder,
+        apply_preset,
+        pregen_start,
+        pregen_status,
+        pregen_cancel,
     ]
 }
 
@@ -422,4 +427,29 @@ fn open_mods_folder(state: State<'_, AppState>, id: String) -> Result<()> {
     std::fs::create_dir_all(&dir)?;
     tauri_plugin_opener::open_path(dir, None::<&str>)
         .map_err(|e| Error::other(format!("Не удалось открыть папку: {e}")))
+}
+
+/// Пресет «Производительность»: моды-оптимизации и настройки. Работает после перезапуска.
+#[tauri::command]
+async fn apply_preset(state: State<'_, AppState>, id: String) -> Result<PresetResult> {
+    state
+        .manager
+        .apply_preset(&id)
+        .await
+        .inspect_err(|e| tracing::warn!("Пресет сервера {id}: {e}"))
+}
+
+#[tauri::command]
+async fn pregen_start(state: State<'_, AppState>, id: String, radius: u32) -> Result<PregenStatus> {
+    state.manager.pregen_start(&id, radius).await
+}
+
+#[tauri::command]
+async fn pregen_status(state: State<'_, AppState>, id: String) -> Result<PregenStatus> {
+    state.manager.pregen_status(&id).await
+}
+
+#[tauri::command]
+async fn pregen_cancel(state: State<'_, AppState>, id: String) -> Result<()> {
+    state.manager.pregen_cancel(&id).await
 }
