@@ -13,7 +13,7 @@ import type { ServerSummary } from "../../bindings/ServerSummary";
 import { Button, Card, Dialog, IconButton, inputClass, Spinner } from "../../components/ui";
 import { t } from "../../i18n";
 import { api, errorMessage, openExternal } from "../../lib/api";
-import { formatSize, isActive, isPaperLike } from "../../lib/format";
+import { formatSize, isActive, isModded, isPaperLike } from "../../lib/format";
 import { useHearth } from "../../lib/store";
 import { FriendPack } from "./FriendPack";
 import { PregenCard, PresetCard } from "./ServerBoost";
@@ -174,7 +174,7 @@ export function ModsTab({ server }: { server: ServerSummary }) {
         )}
       </Card>
 
-      {meta.loader === "fabric" && list && (
+      {isModded(meta.loader) && list && (
         <FriendPack server={server} modsKey={list.items.map((m) => m.file).join("|")} />
       )}
       <PresetCard server={server} onApplied={() => void load()} />

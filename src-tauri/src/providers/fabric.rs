@@ -107,6 +107,7 @@ pub async fn resolve(http: &Http, game: &str) -> Result<ServerArtifact> {
         java_major,
         jvm_flags: java::default_jvm_flags(java_major),
         loader_version: Some(loader),
+        installer_args: None,
     })
 }
 

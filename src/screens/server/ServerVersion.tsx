@@ -12,7 +12,7 @@ import type { UpdateResult } from "../../bindings/UpdateResult";
 import { Button, Card, Dialog, Spinner } from "../../components/ui";
 import { t } from "../../i18n";
 import { api, errorMessage } from "../../lib/api";
-import { isActive, isPaperLike, loaderName } from "../../lib/format";
+import { isActive, isModded, isPaperLike, loaderName } from "../../lib/format";
 import { useHearth } from "../../lib/store";
 
 export function ServerVersion({ server }: { server: ServerSummary }) {
@@ -145,7 +145,7 @@ export function ServerVersion({ server }: { server: ServerSummary }) {
             {t.upgrade.planChecking}
           </p>
         ) : plan.mods.length === 0 ? (
-          isPaperLike(meta.loader) || meta.loader === "fabric" ? <p className="m-0 text-muted">{t.upgrade.planNoMods}</p> : null
+          isPaperLike(meta.loader) || isModded(meta.loader) ? <p className="m-0 text-muted">{t.upgrade.planNoMods}</p> : null
         ) : (
           <>
             <ul className="m-0 p-0 list-none flex flex-col gap-1.5 max-h-[300px] overflow-y-auto">

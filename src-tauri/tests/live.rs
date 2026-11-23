@@ -728,3 +728,63 @@ async fn live_upgrade() {
     assert!(manager.check_update(&paper).await.unwrap().new_build.is_none());
     println!("== Paper сборка {fresh}: ок");
 }
+
+/// NeoForge и Forge: установка через их установщик, запуск через файл
+/// аргументов, моды из пресета и повторный запуск с ними.
+async fn run_forge_like(loader: Loader) {
+    let shared = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("hearth-live");
+    let servers = tempfile::tempdir().unwrap();
+    let paths = Paths::new(shared.join("config"), shared.join("data"));
+    let http = Http::new(paths.cache_dir()).unwrap();
+    let manager = test_manager(&paths, &http, servers.path(), Arc::new(PrintSink::default()));
+    let versions = providers::list_versions(&http, loader, false).await.unwrap();
+    println!("== {loader:?}: версии {:?}", versions.iter().take(5).map(|v| &v.id).collect::<Vec<_>>());
+    let version = versions[0].id.clone();
+    let id = manager
+        .create(CreateServerRequest {
+            name: format!("Модпак {loader:?}"),
+            loader,
+            game_version: version.clone(),
+            memory_mb: 3072,
+            port: Some(free_port()),
+            game_mode: GameMode::Creative,
+            difficulty: Difficulty::Peaceful,
+            max_players: 3,
+            seed: Some("hearth".into()),
+            eula_accepted: true,
+            pirate_mode: false,
+            nick_protection: false,
+        })
+        .await
+        .unwrap()
+        .id;
+    let started = Instant::now();
+    manager.start(&id).await.unwrap();
+    wait_running(&manager, &id).await;
+    let meta = manager.store().load(&id).unwrap();
+    println!("== {loader:?} {version} (сборка {:?}) запущен за {:?}, запуск: {:?}", meta.loader_version, started.elapsed(), meta.jar);
+    assert!(meta.jar.as_deref().is_some_and(|j| j.ends_with("args.txt")));
+    let game = manager.store().game_dir(&id);
+    assert!(!game.join("hearth-installer.jar").exists(), "установщик убран");
+    manager.stop(&id, STOP_TIMEOUT).await.unwrap();
+
+    let preset = manager.apply_preset(&id).await.unwrap();
+    println!("== пресет: installed {:?}, skipped {:?}", preset.installed, preset.skipped);
+    manager.start(&id).await.unwrap();
+    wait_running(&manager, &id).await;
+    let mods = manager.mods(&id).await.unwrap();
+    println!("== моды: {:?}", mods.items.iter().map(|m| &m.title).collect::<Vec<_>>());
+    manager.stop(&id, STOP_TIMEOUT).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_neoforge() {
+    run_forge_like(Loader::NeoForge).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_forge() {
+    run_forge_like(Loader::Forge).await;
+}

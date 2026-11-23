@@ -8,7 +8,7 @@ import type { Loader } from "../../bindings/Loader";
 import { Button, Card, Field, inputClass, ProgressBar, Segmented, Spinner, Switch } from "../../components/ui";
 import { t } from "../../i18n";
 import { api, errorMessage, openExternal } from "../../lib/api";
-import { formatMb, gb, loaderName } from "../../lib/format";
+import { authPluginName, formatMb, gb, loaderName } from "../../lib/format";
 import { useHearth } from "../../lib/store";
 
 interface FormState {
@@ -28,7 +28,7 @@ interface FormState {
   nickProtection: boolean;
 }
 
-const LOADERS: Loader[] = ["paper", "vanilla", "fabric", "purpur"];
+const LOADERS: Loader[] = ["paper", "vanilla", "fabric", "purpur", "neoforge", "forge"];
 
 export function Wizard() {
   const system = useHearth((s) => s.system);
@@ -320,10 +320,10 @@ function FormStep({
           onChange={(v) => update("pirateMode", v)}
         />
         {form.pirateMode &&
-          (form.loader === "vanilla" ? (
+          (!authPluginName(form.loader) ? (
             <p className="m-0 flex items-start gap-2.5 px-3.5 py-3 rounded-[10px] bg-err-bg text-err text-[13px]">
               <Info size={16} className="shrink-0 mt-0.5" aria-hidden="true" />
-              {t.wizard.vanillaNoProtection}
+              {t.wizard.vanillaNoProtection(loaderName(form.loader))}
             </p>
           ) : (
             <ToggleRow
@@ -433,7 +433,7 @@ function InstallStep({
           seed: form.seed.trim() || null,
           eulaAccepted: true,
           pirateMode: form.pirateMode,
-          nickProtection: form.pirateMode && form.nickProtection && form.loader !== "vanilla",
+          nickProtection: form.pirateMode && form.nickProtection && authPluginName(form.loader) !== null,
         });
         id = meta.id;
         setCreatedId(id);

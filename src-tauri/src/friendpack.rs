@@ -98,8 +98,8 @@ impl PackFile {
 
 /// Собирает список: моды сервера для игроков, их зависимости, «Замена OptiFine».
 async fn collect(http: &Http, meta: &ServerMeta, game_dir: &Path, opts: PackOptions) -> Result<(Vec<PackFile>, PackSummary)> {
-    if meta.loader != Loader::Fabric {
-        return Err(Error::invalid("Сборка для друзей нужна только Fabric: плагины Paper ставить игрокам не нужно"));
+    if !meta.loader.is_modded() {
+        return Err(Error::invalid("Сборка для друзей нужна только серверам с модами: плагины Paper ставить игрокам не нужно"));
     }
     let folder = game_dir.join("mods");
     let list = mods::list(http, meta.loader, &meta.game_version, game_dir).await?;
@@ -232,7 +232,8 @@ async fn mods_hashes(folder: &Path) -> Result<Vec<String>> {
 /// свежие версии часто только беты), но не альфа.
 async fn pick_client_version(http: &Http, meta: &ServerMeta, project: &str) -> Result<Option<Version>> {
     let url = format!(
-        "https://api.modrinth.com/v2/project/{project}/version?loaders=%5B%22fabric%22%5D&game_versions=%5B%22{}%22%5D",
+        "https://api.modrinth.com/v2/project/{project}/version?loaders=%5B%22{}%22%5D&game_versions=%5B%22{}%22%5D",
+        meta.loader.modrinth_name(),
         meta.game_version
     );
     let versions: Vec<Version> = match http.get_json("Modrinth", &url).await {
@@ -361,21 +362,36 @@ fn mrpack_index(meta: &ServerMeta, name: &str, loader_version: &str, files: &[Pa
         "name": name,
         "summary": format!("Моды для сервера «{}». Собрано в Hearth.", meta.name),
         "files": files,
-        "dependencies": { "minecraft": meta.game_version, "fabric-loader": loader_version },
+        "dependencies": { "minecraft": meta.game_version, mrpack_loader(meta.loader): loader_version },
     })
+}
+
+/// Ключ загрузчика в `dependencies` формата `.mrpack`.
+fn mrpack_loader(loader: Loader) -> &'static str {
+    match loader {
+        Loader::NeoForge => "neoforge",
+        Loader::Forge => "forge",
+        _ => "fabric-loader",
+    }
 }
 
 fn readme(meta: &ServerMeta, loader_version: &str, files: &[PackFile], address: Option<&str>) -> String {
     let game = &meta.game_version;
+    let name = meta.loader.display_name();
+    let (version_word, installer) = match meta.loader {
+        Loader::NeoForge => ("версия", "https://neoforged.net/"),
+        Loader::Forge => ("версия", "https://files.minecraftforge.net/"),
+        _ => ("загрузчик", "https://fabricmc.net/use/installer/"),
+    };
     let mut lines = vec![
         format!("Моды для сервера «{}»", meta.name),
         String::new(),
-        format!("1. Установите Fabric для Minecraft {game} (загрузчик {loader_version} или новее)."),
-        format!("   TLauncher: выберите в списке версий «Fabric {game}»."),
-        "   Обычный лаунчер: скачайте установщик с https://fabricmc.net/use/installer/".into(),
+        format!("1. Установите {name} для Minecraft {game} ({version_word} {loader_version} или новее)."),
+        format!("   TLauncher: выберите в списке версий «{name} {game}»."),
+        format!("   Обычный лаунчер: скачайте установщик с {installer}"),
         "2. Откройте папку игры (.minecraft) и положите все файлы из папки mods этого архива".into(),
         r"   в папку .minecraft\mods (если её нет, создайте).".into(),
-        format!("3. Запустите игру с версией Fabric {game}."),
+        format!("3. Запустите игру с версией {name} {game}."),
     ];
     if let Some(address) = address {
         lines.push(String::new());

@@ -118,6 +118,7 @@ pub async fn resolve(http: &Http, id: &str) -> Result<ServerArtifact> {
         java_major,
         jvm_flags,
         loader_version: Some(info.build),
+        installer_args: None,
     })
 }
 

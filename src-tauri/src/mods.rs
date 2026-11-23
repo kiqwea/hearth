@@ -106,7 +106,7 @@ pub struct ModSearch {
 pub fn folder_name(loader: Loader) -> Option<&'static str> {
     match loader {
         Loader::Paper | Loader::Purpur => Some("plugins"),
-        Loader::Fabric => Some("mods"),
+        Loader::Fabric | Loader::NeoForge | Loader::Forge => Some("mods"),
         Loader::Vanilla => None,
     }
 }
@@ -117,6 +117,8 @@ pub fn modrinth_loaders(loader: Loader) -> &'static [&'static str] {
         Loader::Paper => &["paper", "purpur", "spigot", "bukkit"],
         Loader::Purpur => &["purpur", "paper", "spigot", "bukkit"],
         Loader::Fabric => &["fabric"],
+        Loader::NeoForge => &["neoforge"],
+        Loader::Forge => &["forge"],
         Loader::Vanilla => &[],
     }
 }

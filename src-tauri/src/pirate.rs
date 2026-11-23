@@ -168,7 +168,8 @@ pub fn auth_plugin_for(loader: Loader) -> Option<AuthPlugin> {
             loaders: &["fabric"],
             folder: "mods",
         }),
-        Loader::Vanilla => None,
+        // Под NeoForge и Forge Hearth защиту ников пока не ставит.
+        Loader::Vanilla | Loader::NeoForge | Loader::Forge => None,
     }
 }
 

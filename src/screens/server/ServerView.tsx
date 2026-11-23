@@ -5,7 +5,7 @@ import type { ServerSummary } from "../../bindings/ServerSummary";
 import { Button, Chip, Dialog, IconButton, Spinner, StatusPill } from "../../components/ui";
 import { t } from "../../i18n";
 import { api, isHearthError } from "../../lib/api";
-import { formatGb, formatUptime, isPaperLike, serverTitle, statusText, statusTone } from "../../lib/format";
+import { formatGb, formatUptime, isModded, isPaperLike, serverTitle, statusText, statusTone } from "../../lib/format";
 import { useHearth, type ServerTab } from "../../lib/store";
 import { BackupsTab } from "./BackupsTab";
 import { ConsoleTab } from "./ConsoleTab";
@@ -26,7 +26,7 @@ export function ServerView({ id, tab }: { id: string; tab: ServerTab }) {
     );
   }
 
-  const extensions = isPaperLike(server.meta.loader) ? t.tabs.plugins : server.meta.loader === "fabric" ? t.tabs.mods : null;
+  const extensions = isPaperLike(server.meta.loader) ? t.tabs.plugins : isModded(server.meta.loader) ? t.tabs.mods : null;
   const tabs: Array<{ key: ServerTab | null; label: string }> = [
     { key: "overview", label: t.tabs.overview },
     { key: "console", label: t.tabs.console },

@@ -143,8 +143,13 @@ pub fn build_args(meta: &ServerMeta, jar: &str) -> Vec<String> {
         args.push("-Dterminal.jline=false".into());
         args.push("-Dterminal.ansi=true".into());
     }
-    args.push("-jar".into());
-    args.push(jar.into());
+    // NeoForge и Forge запускаются через файл аргументов, который создал их установщик.
+    if jar.ends_with(".txt") {
+        args.push(format!("@{jar}"));
+    } else {
+        args.push("-jar".into());
+        args.push(jar.into());
+    }
     args.push("nogui".into());
     args
 }

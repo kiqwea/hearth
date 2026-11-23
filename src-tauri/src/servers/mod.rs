@@ -403,8 +403,8 @@ impl ServerStore {
             pirate_mode: req.pirate_mode,
             auth_plugin: None,
             auth_lang_set: false,
-            // Для Vanilla защиты ников не бывает.
-            nick_protection: req.pirate_mode && req.nick_protection && req.loader != Loader::Vanilla,
+            // Для Vanilla, NeoForge и Forge Hearth защиту ников не ставит.
+            nick_protection: req.pirate_mode && req.nick_protection && crate::pirate::auth_plugin_for(req.loader).is_some(),
             auto_backup: AutoBackup::default(),
             auto_stop_minutes: 0,
         };

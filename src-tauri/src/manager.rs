@@ -694,7 +694,7 @@ impl ServerManager {
         Ok(UpdatePlan {
             target: target.to_string(),
             mods: compat,
-            disable_missing: meta.loader == providers::Loader::Fabric,
+            disable_missing: meta.loader.is_modded(),
         })
     }
 
@@ -847,7 +847,7 @@ impl ServerManager {
         let meta = store.load(id)?;
         let mut result = PresetResult::default();
 
-        if meta.loader == providers::Loader::Fabric {
+        if meta.loader.is_modded() {
             for (project, title) in presets::FABRIC_MODS {
                 match mods::find_file(&self.http, meta.loader, &meta.game_version, project).await {
                     Ok(Some(file)) if file.stable => match self.install_mod(id, project).await {
@@ -1118,7 +1118,7 @@ impl ServerManager {
         let game_dir = store.game_dir(id);
         if on {
             let plugin = pirate::auth_plugin_for(meta.loader)
-                .ok_or_else(|| Error::AuthUnavailable("Для Vanilla нет защиты ников".into()))?;
+                .ok_or_else(|| Error::AuthUnavailable(format!("Для {} Hearth пока не умеет ставить защиту ников", meta.loader.display_name())))?;
             if meta.auth_plugin.is_none() {
                 meta.auth_plugin = Some(pirate::install_auth(&self.http, &plugin, &game_dir, &meta.game_version).await?);
             }
@@ -1361,7 +1361,7 @@ impl ServerManager {
 
         let java_msg = format!("Подготавливаю Java {}", artifact.java_major);
         self.emit_install(id, InstallProgress::step(InstallStage::Java, java_msg.clone()));
-        let (java_major, _) = self
+        let (java_major, java_exe) = self
             .java
             .ensure(artifact.java_major, progress_reporter(&self.sink, id, InstallStage::Java, java_msg))
             .await?;
@@ -1403,13 +1403,83 @@ impl ServerManager {
             }
         }
 
-        meta.jar = Some(artifact.jar.file_name.clone());
+        // NeoForge и Forge: скачан установщик, запускаем его. Он сам качает
+        // Minecraft и библиотеки и создаёт файл аргументов запуска.
+        let launch = match &artifact.installer_args {
+            Some(args_file) => {
+                let msg = format!("Устанавливаю {title}: скачиваются библиотеки, это пара минут");
+                self.emit_install(id, InstallProgress::step(InstallStage::Server, msg));
+                self.run_installer(id, &java_exe, &game_dir, &artifact.jar.file_name).await?;
+                if !game_dir.join(args_file).is_file() {
+                    return Err(Error::other(format!(
+                        "Установщик {} завершился, но не создал файл запуска. Подробности в консоли.",
+                        meta.loader.display_name()
+                    )));
+                }
+                args_file.clone()
+            }
+            None => artifact.jar.file_name.clone(),
+        };
+
+        meta.jar = Some(launch);
         meta.java_major = Some(java_major);
         meta.jvm_flags = artifact.jvm_flags;
         meta.loader_version = artifact.loader_version;
         meta.installed = true;
         store.save(&meta).await?;
         Ok(meta)
+    }
+
+    /// Запускает установщик NeoForge/Forge (`--install-server`) в папке сервера.
+    /// Его вывод идёт в консоль сервера; после установки сам установщик и его
+    /// лог удаляются.
+    async fn run_installer(&self, id: &str, java: &std::path::Path, game_dir: &std::path::Path, installer: &str) -> Result<()> {
+        let mut cmd = tokio::process::Command::new(java);
+        // `--installServer` понимают и Forge, и NeoForge (у NeoForge есть ещё `--install-server`).
+        cmd.args(["-jar", installer, "--installServer", "."])
+            .current_dir(game_dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let mut child = cmd.spawn().map_err(|e| Error::other(format!("Не удалось запустить установщик: {e}")))?;
+        #[cfg(windows)]
+        if let (Some(job), Some(handle)) = (&self.job, child.raw_handle()) {
+            let _ = job.assign(handle);
+        }
+        let stdout = child.stdout.take().expect("stdout piped");
+        let stderr = child.stderr.take().expect("stderr piped");
+        let pump = |reader: Box<dyn AsyncRead + Unpin + Send>| async move {
+            let mut lines = BufReader::new(reader).lines();
+            let mut out = Vec::new();
+            while let Ok(Some(line)) = lines.next_line().await {
+                out.push(line);
+            }
+            out
+        };
+        let (status, out, err) = tokio::join!(child.wait(), pump(Box::new(stdout)), pump(Box::new(stderr)));
+        let status = status?;
+        // В консоль — только итог и ошибки: полный лог установщика очень длинный.
+        // Только итог и настоящие ошибки: в именах библиотек и классов бывают
+        // «errorprone» и «…FailedProblem», а успешных шагов сотни.
+        for line in out.iter().chain(err.iter()).filter(|l| {
+            l.to_lowercase().contains("installed successfully") || l.contains("ERROR") || l.contains("Exception:")
+        }) {
+            self.push_line(id, ConsoleStream::System, format!("Установщик: {line}"));
+        }
+        let _ = tokio::fs::remove_file(game_dir.join(installer)).await;
+        let _ = tokio::fs::remove_file(game_dir.join(format!("{installer}.log"))).await;
+        if !status.success() {
+            for line in err.iter().rev().take(5).rev() {
+                self.push_line(id, ConsoleStream::Stderr, line.clone());
+            }
+            return Err(Error::other(format!("Установщик завершился с ошибкой (код {})", status.code().unwrap_or(-1))));
+        }
+        Ok(())
     }
 
     // ---- запуск и остановка ----

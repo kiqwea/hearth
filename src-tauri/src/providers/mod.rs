@@ -6,6 +6,7 @@
 //! функции и покрыта тестами на сохранённых ответах.
 
 pub mod fabric;
+pub mod forge;
 pub mod paper;
 pub mod purpur;
 pub mod vanilla;
@@ -25,6 +26,10 @@ pub enum Loader {
     /// Форк Paper с дополнительными настройками; плагины те же.
     Purpur,
     Fabric,
+    /// Для больших модпаков (Create с аддонами и т.п.).
+    #[serde(rename = "neoforge")]
+    NeoForge,
+    Forge,
 }
 
 impl Loader {
@@ -34,12 +39,31 @@ impl Loader {
             Loader::Paper => "Paper",
             Loader::Purpur => "Purpur",
             Loader::Fabric => "Fabric",
+            Loader::NeoForge => "NeoForge",
+            Loader::Forge => "Forge",
         }
     }
 
     /// Paper и его форки: плагины Bukkit в папке `plugins`, команды `minecraft:`, `tps`.
     pub fn is_paper_like(self) -> bool {
         matches!(self, Loader::Paper | Loader::Purpur)
+    }
+
+    /// Ядра с модами в папке `mods`, которые обычно нужны и игрокам.
+    pub fn is_modded(self) -> bool {
+        matches!(self, Loader::Fabric | Loader::NeoForge | Loader::Forge)
+    }
+
+    /// Имя загрузчика на Modrinth.
+    pub fn modrinth_name(self) -> &'static str {
+        match self {
+            Loader::Vanilla => "minecraft",
+            Loader::Paper => "paper",
+            Loader::Purpur => "purpur",
+            Loader::Fabric => "fabric",
+            Loader::NeoForge => "neoforge",
+            Loader::Forge => "forge",
+        }
     }
 }
 
@@ -73,6 +97,9 @@ pub struct ServerArtifact {
     pub jvm_flags: Vec<String>,
     /// Сборка Paper или версия загрузчика Fabric.
     pub loader_version: Option<String>,
+    /// NeoForge и Forge: `jar` — установщик. Его запускают с `--install-server`,
+    /// а сервер потом стартует через этот файл аргументов (`java @файл nogui`).
+    pub installer_args: Option<String>,
 }
 
 pub async fn list_versions(
@@ -85,6 +112,8 @@ pub async fn list_versions(
         Loader::Paper => paper::list_versions(http, include_unstable).await,
         Loader::Purpur => purpur::list_versions(http, include_unstable).await,
         Loader::Fabric => fabric::list_versions(http, include_unstable).await,
+        Loader::NeoForge => forge::list_neoforge(http, include_unstable).await,
+        Loader::Forge => forge::list_forge(http).await,
     }
 }
 
@@ -104,6 +133,8 @@ pub async fn resolve(http: &Http, loader: Loader, game_version: &str) -> Result<
         Loader::Paper => paper::resolve(http, game_version).await,
         Loader::Purpur => purpur::resolve(http, game_version).await,
         Loader::Fabric => fabric::resolve(http, game_version).await,
+        Loader::NeoForge => forge::resolve_neoforge(http, game_version).await,
+        Loader::Forge => forge::resolve_forge(http, game_version).await,
     }
 }
 

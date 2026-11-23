@@ -12,7 +12,7 @@ import type { ServerSummary } from "../../bindings/ServerSummary";
 import { Button, Dialog, Spinner, Switch } from "../../components/ui";
 import { t } from "../../i18n";
 import { api, isHearthError } from "../../lib/api";
-import { isActive, isPaperLike } from "../../lib/format";
+import { authPluginName, isActive, loaderName } from "../../lib/format";
 import { useHearth } from "../../lib/store";
 
 type Ask = { kind: "enable" } | { kind: "disable" } | { kind: "noAuth"; reason: string };
@@ -27,7 +27,8 @@ export function PirateMode({ server, onChanged }: { server: ServerSummary; onCha
   const [working, setWorking] = useState<"pirate" | "protection" | null>(null);
 
   const active = isActive(status);
-  const plugin = isPaperLike(meta.loader) ? "AuthMe Reloaded" : meta.loader === "fabric" ? "EasyAuth" : null;
+  const plugin = authPluginName(meta.loader);
+  const loaderTitle = loaderName(meta.loader);
   const protectedNow = !!meta.authPlugin;
 
   async function applyPirate(enable: boolean, withProtection: boolean) {
@@ -113,7 +114,7 @@ export function PirateMode({ server, onChanged }: { server: ServerSummary; onCha
             )}
           </Row>
         ) : (
-          <Row label={t.protection.label} hint={t.wizard.vanillaNoProtection} warn>
+          <Row label={t.protection.label} hint={t.wizard.vanillaNoProtection(loaderTitle)} warn>
             <span />
           </Row>
         ))}
@@ -147,7 +148,7 @@ export function PirateMode({ server, onChanged }: { server: ServerSummary; onCha
             </span>
           </label>
         ) : (
-          <Warning>{t.pirate.vanillaWarning}</Warning>
+          <Warning>{t.pirate.vanillaWarning(loaderTitle)}</Warning>
         )}
         <p className="m-0">{t.pirate.uuidText}</p>
       </Dialog>

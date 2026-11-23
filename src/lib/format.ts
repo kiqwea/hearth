@@ -118,6 +118,18 @@ export async function copyText(text: string): Promise<boolean> {
   }
 }
 
+/** Ядра с модами (папка mods): Fabric, NeoForge, Forge. */
+export function isModded(loader: Loader): boolean {
+  return loader === "fabric" || loader === "neoforge" || loader === "forge";
+}
+
+/** Плагин защиты ников, который умеет ставить Hearth, или `null`. */
+export function authPluginName(loader: Loader): string | null {
+  if (isPaperLike(loader)) return "AuthMe Reloaded";
+  if (loader === "fabric") return "EasyAuth";
+  return null;
+}
+
 /** Paper и его форки: плагины вместо модов, игрокам ничего ставить не нужно. */
 export function isPaperLike(loader: Loader): boolean {
   return loader === "paper" || loader === "purpur";
