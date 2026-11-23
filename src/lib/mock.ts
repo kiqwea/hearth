@@ -642,6 +642,41 @@ export function createMockApi(): HearthApi {
     pregenCancel: async (id) => {
       pregen.delete(id);
     },
+    checkServerUpdate: async (id) => {
+      await wait(600);
+      const m = servers.get(id)!.meta;
+      return {
+        currentVersion: m.gameVersion,
+        currentBuild: m.loaderVersion,
+        newBuild: m.loader === "paper" ? "260" : null,
+        newerVersions: m.loader === "fabric" ? ["26.4"] : m.loader === "vanilla" ? ["26.3", "26.2"] : [],
+      };
+    },
+    planUpdate: async (id, target) => {
+      await wait(900);
+      const fabric = servers.get(id)!.meta.loader === "fabric";
+      return {
+        target,
+        disableMissing: fabric,
+        mods: modsOf(id).map((m) => ({
+          title: m.title,
+          file: m.file,
+          status: !m.projectId ? "unknown" : m.title === "Create" ? "missing" : "ready",
+          newVersion: m.projectId && m.title !== "Create" ? `${m.version}+${target}` : null,
+          clientSide: m.clientSide,
+        })),
+      };
+    },
+    upgradeServer: async (id, target) => {
+      const s = servers.get(id)!;
+      setStatus(id, { state: "installing" });
+      await wait(2500);
+      if (target) s.meta.gameVersion = target;
+      else s.meta.loaderVersion = "260";
+      setStatus(id, { state: "stopped" });
+      const notes = s.meta.loader === "fabric" && target ? ["Create: ещё не вышел под " + target + ", убран в папку mods-disabled", "my-local-mod: файл не с Modrinth, проверьте его совместимость сами"] : [];
+      return { meta: { ...s.meta }, backup: null, updated: [], disabled: notes.length ? ["create-6.1.jar"] : [], notes };
+    },
     pickZip: async () => "C:\\Users\\Дима\\Downloads\\SkyBlock.zip",
     pickFolder: async () => null,
     pickSaveZip: async (name) => `C:\\Users\\Дима\\Downloads\\${name}`,

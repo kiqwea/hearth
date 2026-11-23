@@ -38,6 +38,7 @@ use crate::direct::{DirectInfo, DirectManager, DirectState};
 use crate::mods::{self, ModList, ModSearch};
 use crate::pirate;
 use crate::presets::{self, PregenStatus, PresetResult};
+use crate::upgrade::{ModCompat, ModCompatStatus, UpdateInfo, UpdatePlan, UpdateResult};
 use crate::players::{self, PlayerAction, PlayerInfo, ServerStats, StatsEvent};
 use crate::rcon::{self, Rcon};
 use crate::tunnel::api::PlayitApi;
@@ -603,7 +604,172 @@ impl ServerManager {
         let _busy = if running { None } else { Some(self.begin_busy(id)?) };
         let files = mods::install(&self.http, meta.loader, &meta.game_version, &store.game_dir(id), project, !running).await?;
         tracing::info!("Сервер {id}: поставлено {files:?}");
-        Ok(files)
+        self.follow_auth_plugin(&store, id, &files).await?;
+        Ok(files.into_iter().map(|f| f.file).collect())
+    }
+
+    // ---- обновление сервера ----
+
+    /// Есть ли новая сборка ядра этой версии игры и новые версии Minecraft.
+    pub async fn check_update(&self, id: &str) -> Result<UpdateInfo> {
+        let meta = self.store().load(id)?;
+        let versions = providers::list_versions(&self.http, meta.loader, false).await?;
+        let new_build = if meta.loader == providers::Loader::Vanilla {
+            None
+        } else {
+            match providers::resolve(&self.http, meta.loader, &meta.game_version).await {
+                Ok(artifact) => artifact.loader_version.filter(|b| meta.loader_version.as_ref() != Some(b)),
+                Err(e) => {
+                    tracing::warn!("Не удалось проверить сборку {} {}: {e}", meta.loader.display_name(), meta.game_version);
+                    None
+                }
+            }
+        };
+        Ok(UpdateInfo {
+            newer_versions: providers::newer_stable(&versions, &meta.game_version),
+            current_version: meta.game_version,
+            current_build: meta.loader_version,
+            new_build,
+        })
+    }
+
+    /// Какие моды и плагины есть под версию `target`.
+    pub async fn plan_update(&self, id: &str, target: &str) -> Result<UpdatePlan> {
+        let store = self.store();
+        let meta = store.load(id)?;
+        let mut compat = Vec::new();
+        if target != meta.game_version && mods::folder_name(meta.loader).is_some() {
+            let list = mods::list(&self.http, meta.loader, &meta.game_version, &store.game_dir(id)).await?;
+            if !list.online && !list.items.is_empty() {
+                return Err(Error::Network("не удалось проверить моды на Modrinth".into()));
+            }
+            for item in list.items {
+                let (status, new_version) = match &item.project_id {
+                    Some(project) => match mods::find_file(&self.http, meta.loader, target, project).await? {
+                        Some(file) => (ModCompatStatus::Ready, Some(file.version)),
+                        None => (ModCompatStatus::Missing, None),
+                    },
+                    None => (ModCompatStatus::Unknown, None),
+                };
+                compat.push(ModCompat { title: item.title, file: item.file, status, new_version, client_side: item.client_side });
+            }
+        }
+        Ok(UpdatePlan {
+            target: target.to_string(),
+            mods: compat,
+            disable_missing: meta.loader == providers::Loader::Fabric,
+        })
+    }
+
+    /// Обновляет сервер. `target = None` — свежая сборка той же версии игры.
+    /// Порядок: копия мира → новое ядро (и Java) → моды и плагины под новую
+    /// версию. Если ядро не скачалось, сервер остаётся на прежней версии.
+    pub async fn update_server(&self, id: &str, target: Option<&str>) -> Result<UpdateResult> {
+        self.ensure_stopped(id, "обновить его")?;
+        let _busy = self.begin_busy(id)?;
+        let store = self.store();
+        let old = store.load(id)?;
+        let target = target.unwrap_or(&old.game_version).to_string();
+        let changes_version = target != old.game_version;
+        if changes_version {
+            let versions = providers::list_versions(&self.http, old.loader, false).await?;
+            if !providers::newer_stable(&versions, &old.game_version).contains(&target) {
+                return Err(Error::invalid(format!("Обновиться можно только на более новую версию, а не на {target}")));
+            }
+        }
+        let plan = if changes_version { Some(self.plan_update(id, &target).await?) } else { None };
+
+        let game_dir = store.game_dir(id);
+        let dir = store.backups_dir(id);
+        let backup = {
+            let _backup = self.begin_backup(id)?;
+            backups::backup_world(&game_dir, &level_name(&store, id), &dir, BackupKind::BeforeUpdate).await?
+        };
+        let backup = backup
+            .map(|p| p.file_name().unwrap_or_default().to_string_lossy().into_owned())
+            .and_then(|f| backups::list(&dir).into_iter().find(|b| b.file == f));
+
+        // Новое ядро. При ошибке возвращаем прежние метаданные: старый jar на месте.
+        let mut next = old.clone();
+        next.game_version = target.clone();
+        store.save(&next).await?;
+        let old_jar = old.jar.clone();
+        let mut meta = match self.install_locked(id).await {
+            Ok(meta) => meta,
+            Err(e) => {
+                store.save(&old).await?;
+                return Err(e);
+            }
+        };
+        if let Some(old_jar) = old_jar.filter(|j| Some(j) != meta.jar.as_ref()) {
+            let _ = tokio::fs::remove_file(game_dir.join(old_jar)).await;
+        }
+
+        let mut updated = Vec::new();
+        let mut disabled = Vec::new();
+        let mut notes = Vec::new();
+        if let Some(plan) = plan {
+            let folder = game_dir.join(mods::folder_name(meta.loader).unwrap_or("mods"));
+            for item in plan.mods {
+                match item.status {
+                    ModCompatStatus::Ready => {
+                        // Ищем проект по файлу заново: после обновления зависимостей имя могло смениться.
+                        let list = mods::list(&self.http, meta.loader, &old.game_version, &game_dir).await?;
+                        let Some(project) = list.items.iter().find(|m| m.file == item.file).and_then(|m| m.project_id.clone()) else {
+                            continue; // уже обновлён как зависимость
+                        };
+                        match mods::install(&self.http, meta.loader, &target, &game_dir, &project, true).await {
+                            Ok(files) => {
+                                self.follow_auth_plugin(&store, id, &files).await?;
+                                updated.extend(files.into_iter().map(|f| f.file));
+                            }
+                            Err(e) => notes.push(format!("{}: не обновился ({e})", item.title)),
+                        }
+                    }
+                    ModCompatStatus::Missing if plan.disable_missing => {
+                        let off = game_dir.join("mods-disabled");
+                        tokio::fs::create_dir_all(&off).await?;
+                        crate::fsx::rename_with_retry(&folder.join(&item.file), &off.join(&item.file)).await?;
+                        disabled.push(item.file.clone());
+                        notes.push(format!("{}: ещё не вышел под {target}, убран в папку mods-disabled", item.title));
+                    }
+                    ModCompatStatus::Missing => {
+                        notes.push(format!("{}: нет версии под {target}; оставлен, возможно, заработает и так", item.title))
+                    }
+                    ModCompatStatus::Unknown => {
+                        notes.push(format!("{}: файл не с Modrinth, проверьте его совместимость сами", item.title))
+                    }
+                }
+            }
+            // Плагин защиты ников убран: защита больше не работает.
+            meta = store.load(id)?;
+            if meta.auth_plugin.as_ref().is_some_and(|f| disabled.contains(f)) {
+                meta.auth_plugin = None;
+                meta.nick_protection = false;
+                store.save(&meta).await?;
+                notes.push("Защита ников выключена: её мод ещё не вышел под новую версию".into());
+            }
+        }
+        tracing::info!(
+            "Сервер {id}: обновлён {} {} → {} (сборка {:?}), моды: {updated:?}, убраны: {disabled:?}",
+            meta.loader.display_name(),
+            old.game_version,
+            meta.game_version,
+            meta.loader_version
+        );
+        Ok(UpdateResult { meta, backup, updated, disabled, notes })
+    }
+
+    /// Hearth помнит плагин защиты ников по имени файла: если его обновили,
+    /// запоминаем новое имя.
+    async fn follow_auth_plugin(&self, store: &ServerStore, id: &str, files: &[mods::InstalledFile]) -> Result<()> {
+        let mut meta = store.load(id)?;
+        let Some(current) = meta.auth_plugin.clone() else { return Ok(()) };
+        if let Some(new) = files.iter().find(|f| f.replaced.as_deref() == Some(current.as_str())) {
+            meta.auth_plugin = Some(new.file.clone());
+            store.save(&meta).await?;
+        }
+        Ok(())
     }
 
     /// Обновляет все плагины или моды, для которых вышли новые версии.

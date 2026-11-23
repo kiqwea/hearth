@@ -13,6 +13,9 @@ import type { ModList } from "../bindings/ModList";
 import type { ModSearch } from "../bindings/ModSearch";
 import type { PregenStatus } from "../bindings/PregenStatus";
 import type { PresetResult } from "../bindings/PresetResult";
+import type { UpdateInfo } from "../bindings/UpdateInfo";
+import type { UpdatePlan } from "../bindings/UpdatePlan";
+import type { UpdateResult } from "../bindings/UpdateResult";
 import type { SavedWorld } from "../bindings/SavedWorld";
 import type { ConsoleLine } from "../bindings/ConsoleLine";
 import type { CreateServerRequest } from "../bindings/CreateServerRequest";
@@ -125,6 +128,12 @@ export interface HearthApi {
   pregenStart(id: string, radius: number): Promise<PregenStatus>;
   pregenStatus(id: string): Promise<PregenStatus>;
   pregenCancel(id: string): Promise<void>;
+
+  // Обновление сервера
+  checkServerUpdate(id: string): Promise<UpdateInfo>;
+  planUpdate(id: string, target: string): Promise<UpdatePlan>;
+  /** `target = null` — свежая сборка той же версии. Сервер должен быть остановлен. */
+  upgradeServer(id: string, target: string | null): Promise<UpdateResult>;
   /** Системные окна выбора файла. `null`, если пользователь передумал. */
   pickZip(): Promise<string | null>;
   pickFolder(): Promise<string | null>;
@@ -230,6 +239,9 @@ const tauriApi: HearthApi = {
   pregenStart: (id, radius) => invoke("pregen_start", { id, radius }),
   pregenStatus: (id) => invoke("pregen_status", { id }),
   pregenCancel: (id) => invoke("pregen_cancel", { id }),
+  checkServerUpdate: (id) => invoke("check_update", { id }),
+  planUpdate: (id, target) => invoke("plan_update", { id, target }),
+  upgradeServer: (id, target) => invoke("upgrade_server", { id, target }),
   pickZip: async () => {
     const { open } = await import("@tauri-apps/plugin-dialog");
     const path = await open({ multiple: false, filters: [{ name: "Zip-архив", extensions: ["zip"] }] });

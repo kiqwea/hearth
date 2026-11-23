@@ -3,4 +3,4 @@
 /**
  * Зачем сделана копия. Определяется по имени файла.
  */
-export type BackupKind = "auto" | "manual" | "beforeRestore" | "beforeImport" | "pirate" | "other";
+export type BackupKind = "auto" | "manual" | "beforeRestore" | "beforeImport" | "beforeUpdate" | "pirate" | "other";

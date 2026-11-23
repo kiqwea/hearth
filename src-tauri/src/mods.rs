@@ -262,9 +262,17 @@ pub async fn find_file(http: &Http, loader: Loader, game_version: &str, project:
     Ok(None)
 }
 
+/// Скачанный файл: какой проект и какой старый файл он заменил.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InstalledFile {
+    pub project_id: String,
+    pub file: String,
+    pub replaced: Option<String>,
+}
+
 /// Ставит проект с обязательными зависимостями. Если проект уже стоит другой
 /// версией, это обновление: старый файл удаляется после скачивания нового.
-/// Возвращает имена поставленных файлов (пусто, если всё уже стояло).
+/// Возвращает скачанные файлы (пусто, если всё уже стояло); первый — сам проект.
 pub async fn install(
     http: &Http,
     loader: Loader,
@@ -272,7 +280,7 @@ pub async fn install(
     game_dir: &Path,
     project: &str,
     allow_replace: bool,
-) -> Result<Vec<String>> {
+) -> Result<Vec<InstalledFile>> {
     let folder = game_dir.join(require_folder(loader)?);
     tokio::fs::create_dir_all(&folder).await?;
 
@@ -315,13 +323,14 @@ pub async fn install(
             }
             let dest = folder.join(safe_file_name(&file.filename)?);
             http.download(&file.url, &dest, file.checksum.as_ref(), |_, _| {}).await?;
-            if let Some((old, _)) = existing.filter(|(old, _)| *old != file.filename)
-                && let Err(e) = tokio::fs::remove_file(folder.join(&old)).await
+            let replaced = existing.map(|(old, _)| old).filter(|old| *old != file.filename);
+            if let Some(old) = &replaced
+                && let Err(e) = tokio::fs::remove_file(folder.join(old)).await
             {
                 tracing::warn!("Не удалось удалить старую версию {old}: {e}");
             }
             present.insert(file.project_id.clone(), (file.filename.clone(), file.version_id.clone()));
-            installed.push(file.filename.clone());
+            installed.push(InstalledFile { project_id: file.project_id.clone(), file: file.filename.clone(), replaced });
         }
         if depth < MAX_DEPTH {
             for dep in &file.required {
@@ -402,7 +411,7 @@ mod tests {
         let http = Http::new(dir.path().join("cache")).unwrap();
         let game = dir.path().join("server");
         // Lithium не требует зависимостей; Sodium Extra требует Sodium — проверим цепочку.
-        let first = install(&http, Loader::Fabric, "26.3", &game, "gvQqBUqZ", true).await.unwrap();
+        let first = install(&http, Loader::Fabric, "26.3", &game, "gvQqBUqZ", true).await.unwrap().into_iter().map(|f| f.file).collect::<Vec<_>>();
         println!("поставлено: {first:?}");
         assert_eq!(first.len(), 1);
         assert!(install(&http, Loader::Fabric, "26.3", &game, "gvQqBUqZ", true).await.unwrap().is_empty(), "повторно не качает");
@@ -432,14 +441,15 @@ mod tests {
         assert!(listed.items[0].update.is_some());
         assert!(install(&http, Loader::Fabric, "26.3", &game, "gvQqBUqZ", false).await.is_err(), "на работающем не обновляет");
         let updated = install(&http, Loader::Fabric, "26.3", &game, "gvQqBUqZ", true).await.unwrap();
-        assert_eq!(updated, first);
+        assert_eq!(updated[0].replaced.as_deref(), Some(old_file.filename.as_str()), "заменил старый файл");
+        assert_eq!(updated[0].file, first[0]);
         let names: Vec<String> = std::fs::read_dir(game.join("mods")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         assert_eq!(names, first, "старый файл удалён");
 
         // Плагин с зависимостью на Paper.
         let plugins = install(&http, Loader::Paper, "26.3", &game, "luckperms", true).await.unwrap();
         println!("плагины: {plugins:?}");
-        assert!(game.join("plugins").join(&plugins[0]).is_file());
+        assert!(game.join("plugins").join(&plugins[0].file).is_file());
         let found = search(&http, Loader::Purpur, "26.3", "", 0).await.unwrap();
         assert!(found.hits.iter().all(|h| h.client_side == ClientSide::ServerOnly));
     }

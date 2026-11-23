@@ -654,3 +654,77 @@ async fn live_preset_paper() {
 async fn live_preset_fabric() {
     run_preset(Loader::Fabric).await;
 }
+
+/// Обновление сервера на новую версию игры с модами и обновление сборки Paper.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_upgrade() {
+    let shared = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("hearth-live");
+    let servers = tempfile::tempdir().unwrap();
+    let paths = Paths::new(shared.join("config"), shared.join("data"));
+    let http = Http::new(paths.cache_dir()).unwrap();
+    let manager = test_manager(&paths, &http, servers.path(), Arc::new(PrintSink::default()));
+    let request = |name: &str, loader: Loader, version: String| CreateServerRequest {
+        name: name.into(),
+        loader,
+        game_version: version,
+        memory_mb: 2048,
+        port: Some(free_port()),
+        game_mode: GameMode::Creative,
+        difficulty: Difficulty::Peaceful,
+        max_players: 3,
+        seed: Some("hearth".into()),
+        eula_accepted: true,
+        pirate_mode: false,
+        nick_protection: false,
+    };
+
+    // Fabric: предыдущая версия игры с Lithium → последняя.
+    let versions = providers::list_versions(&http, Loader::Fabric, false).await.unwrap();
+    let (latest, previous) = (versions[0].id.clone(), versions[1].id.clone());
+    println!("== Fabric {previous} → {latest}");
+    let id = manager.create(request("Обновление", Loader::Fabric, previous.clone())).await.unwrap().id;
+    manager.install_mod(&id, "lithium").await.unwrap();
+    manager.start(&id).await.unwrap();
+    wait_running(&manager, &id).await;
+    manager.stop(&id, STOP_TIMEOUT).await.unwrap();
+
+    let info = manager.check_update(&id).await.unwrap();
+    println!("== проверка: {info:?}");
+    assert_eq!(info.newer_versions.first(), Some(&latest));
+    let plan = manager.plan_update(&id, &latest).await.unwrap();
+    println!("== план: {plan:?}");
+    assert!(plan.mods.iter().any(|m| m.title == "Lithium" && m.status == hearth_lib::upgrade::ModCompatStatus::Ready));
+    let older = versions[2].id.clone();
+    assert!(manager.update_server(&id, Some(&older)).await.is_err(), "на старую версию нельзя");
+
+    let result = manager.update_server(&id, Some(&latest)).await.unwrap();
+    println!("== итог: updated {:?}, disabled {:?}, notes {:?}", result.updated, result.disabled, result.notes);
+    assert_eq!(result.meta.game_version, latest);
+    assert_eq!(result.backup.as_ref().map(|b| b.kind), Some(BackupKind::BeforeUpdate));
+    let mods = manager.mods(&id).await.unwrap();
+    println!("== моды после: {:?}", mods.items.iter().map(|m| (&m.title, &m.version)).collect::<Vec<_>>());
+    assert!(mods.items.iter().any(|m| m.title == "Lithium" && m.version.as_deref().is_some_and(|v| v.contains(&latest))));
+    manager.start(&id).await.unwrap();
+    wait_running(&manager, &id).await;
+    assert!(
+        manager.console(&id).iter().any(|l| l.text.contains(&latest)),
+        "сервер запустился на новой версии"
+    );
+    manager.stop(&id, STOP_TIMEOUT).await.unwrap();
+
+    // Paper: та же версия, но «старая» сборка → свежая.
+    let version = providers::list_versions(&http, Loader::Paper, false).await.unwrap()[0].id.clone();
+    let paper = manager.create(request("Сборка", Loader::Paper, version)).await.unwrap().id;
+    manager.install(&paper).await.unwrap();
+    let mut meta = manager.store().load(&paper).unwrap();
+    let fresh = meta.loader_version.clone().unwrap();
+    meta.loader_version = Some("1".into());
+    manager.store().save(&meta).await.unwrap();
+    let info = manager.check_update(&paper).await.unwrap();
+    assert_eq!(info.new_build.as_deref(), Some(fresh.as_str()));
+    let result = manager.update_server(&paper, None).await.unwrap();
+    assert_eq!(result.meta.loader_version.as_deref(), Some(fresh.as_str()));
+    assert!(manager.check_update(&paper).await.unwrap().new_build.is_none());
+    println!("== Paper сборка {fresh}: ок");
+}

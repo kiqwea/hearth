@@ -9,6 +9,7 @@ import { gb, isActive } from "../../lib/format";
 import { HANDLED_ELSEWHERE, KNOWN_KEYS, PROPERTY_GROUPS, type PropertyDef } from "../../lib/properties";
 import { useHearth } from "../../lib/store";
 import { PirateMode } from "./PirateMode";
+import { ServerVersion } from "./ServerVersion";
 
 const fieldClass = "h-10 px-3 rounded-[9px] border border-line-strong bg-bg text-ink placeholder:text-faint";
 /** Автовыключение пустого сервера, минуты (0 — никогда). */
@@ -132,6 +133,8 @@ export function SettingsTab({ server }: { server: ServerSummary }) {
           {t.settings.restartNotice}
         </div>
       )}
+
+      <ServerVersion server={server} />
 
       <Group title={t.settings.general}>
         <Row label={t.settings.name} htmlFor="set-name">

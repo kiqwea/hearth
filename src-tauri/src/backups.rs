@@ -39,6 +39,8 @@ pub enum BackupKind {
     BeforeRestore,
     /// Перед импортом другого мира.
     BeforeImport,
+    /// Перед обновлением версии сервера.
+    BeforeUpdate,
     /// Перед включением или выключением пиратского режима.
     Pirate,
     Other,
@@ -51,6 +53,7 @@ impl BackupKind {
             BackupKind::Manual => "manual",
             BackupKind::BeforeRestore => "before-restore",
             BackupKind::BeforeImport => "before-import",
+            BackupKind::BeforeUpdate => "before-update",
             BackupKind::Pirate => "pirate",
             BackupKind::Other => "other",
         }
@@ -62,6 +65,7 @@ impl BackupKind {
             "manual" => BackupKind::Manual,
             "before-restore" => BackupKind::BeforeRestore,
             "before-import" => BackupKind::BeforeImport,
+            "before-update" => BackupKind::BeforeUpdate,
             t if t.starts_with("pirate") => BackupKind::Pirate,
             _ => BackupKind::Other,
         }

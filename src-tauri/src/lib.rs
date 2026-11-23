@@ -23,6 +23,7 @@ pub mod rcon;
 pub mod servers;
 pub mod system;
 pub mod tunnel;
+pub mod upgrade;
 
 mod app;
 

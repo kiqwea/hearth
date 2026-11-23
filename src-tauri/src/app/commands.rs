@@ -9,6 +9,7 @@ use super::AppState;
 use crate::backups::{BackupInfo, BackupKind, SavedWorld};
 use crate::mods::{self, ModList, ModSearch};
 use crate::presets::{PregenStatus, PresetResult};
+use crate::upgrade::{UpdateInfo, UpdatePlan, UpdateResult};
 use crate::config::AppConfig;
 use crate::error::{Error, Result};
 use crate::java::InstalledJava;
@@ -77,6 +78,9 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         pregen_start,
         pregen_status,
         pregen_cancel,
+        check_update,
+        plan_update,
+        upgrade_server,
     ]
 }
 
@@ -452,4 +456,26 @@ async fn pregen_status(state: State<'_, AppState>, id: String) -> Result<PregenS
 #[tauri::command]
 async fn pregen_cancel(state: State<'_, AppState>, id: String) -> Result<()> {
     state.manager.pregen_cancel(&id).await
+}
+
+/// Новая сборка ядра и новые версии игры.
+#[tauri::command]
+async fn check_update(state: State<'_, AppState>, id: String) -> Result<UpdateInfo> {
+    state.manager.check_update(&id).await
+}
+
+/// Какие моды и плагины есть под новую версию.
+#[tauri::command]
+async fn plan_update(state: State<'_, AppState>, id: String, target: String) -> Result<UpdatePlan> {
+    state.manager.plan_update(&id, &target).await
+}
+
+/// Обновление сервера с бэкапом. `target = null` — свежая сборка той же версии.
+#[tauri::command]
+async fn upgrade_server(state: State<'_, AppState>, id: String, target: Option<String>) -> Result<UpdateResult> {
+    state
+        .manager
+        .update_server(&id, target.as_deref())
+        .await
+        .inspect_err(|e| tracing::warn!("Обновление сервера {id}: {e}"))
 }

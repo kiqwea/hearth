@@ -88,11 +88,38 @@ pub async fn list_versions(
     }
 }
 
+/// Стабильные версии новее `current`, новые первыми. Списки провайдеров уже
+/// отсортированы от новых к старым. Если текущей версии в списке нет
+/// (например, снапшот), обновляться не на что.
+pub fn newer_stable(list: &[GameVersion], current: &str) -> Vec<String> {
+    let Some(pos) = list.iter().position(|v| v.id == current) else {
+        return Vec::new();
+    };
+    list[..pos].iter().filter(|v| v.stable).map(|v| v.id.clone()).collect()
+}
+
 pub async fn resolve(http: &Http, loader: Loader, game_version: &str) -> Result<ServerArtifact> {
     match loader {
         Loader::Vanilla => vanilla::resolve(http, game_version).await,
         Loader::Paper => paper::resolve(http, game_version).await,
         Loader::Purpur => purpur::resolve(http, game_version).await,
         Loader::Fabric => fabric::resolve(http, game_version).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn v(id: &str, stable: bool) -> GameVersion {
+        GameVersion { id: id.into(), stable, release_time: None }
+    }
+
+    #[test]
+    fn newer_stable_versions() {
+        let list = [v("26.4", true), v("26.4-rc-1", false), v("26.3.1", true), v("26.3", true), v("26.2", true)];
+        assert_eq!(newer_stable(&list, "26.3"), ["26.4", "26.3.1"]);
+        assert!(newer_stable(&list, "26.4").is_empty());
+        assert!(newer_stable(&list, "26.5-snapshot").is_empty());
     }
 }

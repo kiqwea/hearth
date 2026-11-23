@@ -310,6 +310,38 @@ export const ru = {
     by: (author: string) => `от ${author}`,
   },
 
+  upgrade: {
+    title: "Версия сервера",
+    current: (title: string, build: string | null, fabric: boolean) =>
+      build ? `${title} · ${fabric ? "загрузчик" : "сборка"} ${build}` : title,
+    checking: "Проверяю обновления…",
+    checkFailed: "Не удалось проверить обновления",
+    upToDate: "Установлена последняя версия",
+    newBuild: (build: string, fabric: boolean) =>
+      fabric
+        ? `Вышел загрузчик Fabric ${build}: исправления ошибок, мир не меняется.`
+        : `Вышла новая сборка ${build}: исправления ошибок, мир не меняется.`,
+    updateBuild: (fabric: boolean) => (fabric ? "Обновить загрузчик" : "Обновить сборку"),
+    newVersion: (v: string) => `Вышла версия Minecraft ${v}. Когда друзья обновят игру, им нужен сервер той же версии.`,
+    updateTo: (v: string) => `Обновить до ${v}…`,
+    stopFirst: "Остановите сервер, чтобы обновить его.",
+    planTitle: (v: string) => `Обновить сервер до ${v}?`,
+    planText:
+      "Hearth сделает копию мира, скачает новое ядро и обновит моды и плагины. Вернуться на старую версию можно только из этой копии: обновлённый мир старая версия не откроет.",
+    planChecking: "Проверяю моды и плагины…",
+    planNoMods: "Модов и плагинов нет, проверять нечего.",
+    ready: (v: string) => `будет ${v}`,
+    missingMod: "ещё не вышел: будет убран в mods-disabled",
+    missingPlugin: "нет новой версии: останется, скорее всего заработает",
+    unknown: "не с Modrinth: проверьте сами",
+    playersNote: "Друзьям, у которых стоят моды «нужен игрокам», тоже нужно обновить их.",
+    update: "Обновить",
+    updating: "Обновляю сервер…",
+    done: (v: string) => `Сервер обновлён до ${v}`,
+    doneBuild: "Сборка обновлена",
+    notes: "Обратите внимание",
+  },
+
   preset: {
     title: "Ускорить сервер",
     hintFabric: "Пресет «Производительность»: моды Lithium, FerriteCore, ModernFix, Krypton и профайлер Spark, плюс настройки сервера. Игра не меняется, ставить моды игрокам не нужно.",
@@ -359,6 +391,7 @@ export const ru = {
       manual: "Вручную",
       beforeRestore: "Перед восстановлением",
       beforeImport: "Перед заменой мира",
+      beforeUpdate: "Перед обновлением версии",
       pirate: "Перед сменой режима входа",
       other: "Копия",
     },
