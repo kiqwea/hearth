@@ -7,6 +7,7 @@
 
 pub mod fabric;
 pub mod paper;
+pub mod purpur;
 pub mod vanilla;
 
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,8 @@ use crate::net::{Checksum, Http};
 pub enum Loader {
     Vanilla,
     Paper,
+    /// Форк Paper с дополнительными настройками; плагины те же.
+    Purpur,
     Fabric,
 }
 
@@ -29,8 +32,14 @@ impl Loader {
         match self {
             Loader::Vanilla => "Vanilla",
             Loader::Paper => "Paper",
+            Loader::Purpur => "Purpur",
             Loader::Fabric => "Fabric",
         }
+    }
+
+    /// Paper и его форки: плагины Bukkit в папке `plugins`, команды `minecraft:`, `tps`.
+    pub fn is_paper_like(self) -> bool {
+        matches!(self, Loader::Paper | Loader::Purpur)
     }
 }
 
@@ -74,6 +83,7 @@ pub async fn list_versions(
     match loader {
         Loader::Vanilla => vanilla::list_versions(http, include_unstable).await,
         Loader::Paper => paper::list_versions(http, include_unstable).await,
+        Loader::Purpur => purpur::list_versions(http, include_unstable).await,
         Loader::Fabric => fabric::list_versions(http, include_unstable).await,
     }
 }
@@ -82,6 +92,7 @@ pub async fn resolve(http: &Http, loader: Loader, game_version: &str) -> Result<
     match loader {
         Loader::Vanilla => vanilla::resolve(http, game_version).await,
         Loader::Paper => paper::resolve(http, game_version).await,
+        Loader::Purpur => purpur::resolve(http, game_version).await,
         Loader::Fabric => fabric::resolve(http, game_version).await,
     }
 }

@@ -7,7 +7,6 @@ use std::collections::VecDeque;
 use serde::Serialize;
 use ts_rs::TS;
 
-use crate::providers::Loader;
 use crate::servers::ServerMeta;
 
 /// Сколько строк консоли держим в памяти на сервер.
@@ -139,7 +138,7 @@ pub fn build_args(meta: &ServerMeta, jar: &str) -> Vec<String> {
         ]
         .map(String::from),
     );
-    if meta.loader == Loader::Paper {
+    if meta.loader.is_paper_like() {
         // Цвета в консоли без настоящего терминала.
         args.push("-Dterminal.jline=false".into());
         args.push("-Dterminal.ansi=true".into());

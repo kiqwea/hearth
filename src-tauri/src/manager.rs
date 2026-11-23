@@ -35,6 +35,7 @@ use uuid::Uuid;
 
 use crate::backups::{self, BackupInfo, BackupKind, SavedWorld, WorldSource};
 use crate::direct::{DirectInfo, DirectManager, DirectState};
+use crate::mods::{self, ModList, ModSearch};
 use crate::pirate;
 use crate::players::{self, PlayerAction, PlayerInfo, ServerStats, StatsEvent};
 use crate::rcon::{self, Rcon};
@@ -131,6 +132,8 @@ pub struct ServerManager {
     access_ops: tokio::sync::Mutex<()>,
     /// Длина «минуты» автовыключения в миллисекундах. В живых тестах её сокращают.
     minute_ms: AtomicU64,
+    /// Установка и удаление плагинов идут по очереди.
+    mod_ops: tokio::sync::Mutex<()>,
 }
 
 /// Снимает отметку «занят», когда операция закончилась (в том числе с ошибкой).
@@ -222,6 +225,7 @@ impl ServerManager {
             playit,
             access_ops: tokio::sync::Mutex::new(()),
             minute_ms: AtomicU64::new(60_000),
+            mod_ops: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -567,6 +571,66 @@ impl ServerManager {
     /// Миры одиночной игры на этом компьютере.
     pub async fn saved_worlds(&self) -> Result<Vec<SavedWorld>> {
         Ok(tokio::task::spawn_blocking(backups::saved_worlds).await?)
+    }
+
+    // ---- плагины и моды ----
+
+    /// Плагины или моды сервера с названиями и доступными обновлениями.
+    pub async fn mods(&self, id: &str) -> Result<ModList> {
+        let store = self.store();
+        let meta = store.load(id)?;
+        let mut list = mods::list(&self.http, meta.loader, &meta.game_version, &store.game_dir(id)).await?;
+        for item in &mut list.items {
+            item.nick_protection = meta.auth_plugin.as_deref() == Some(item.file.as_str());
+        }
+        Ok(list)
+    }
+
+    pub async fn search_mods(&self, id: &str, query: &str, offset: u32) -> Result<ModSearch> {
+        let meta = self.store().load(id)?;
+        mods::search(&self.http, meta.loader, &meta.game_version, query, offset).await
+    }
+
+    /// Ставит плагин или мод с зависимостями. На работающем сервере можно
+    /// поставить новый (заработает после перезапуска), но не обновить старый:
+    /// его файл занят.
+    pub async fn install_mod(&self, id: &str, project: &str) -> Result<Vec<String>> {
+        let _ops = self.mod_ops.lock().await;
+        let store = self.store();
+        let meta = store.load(id)?;
+        let running = self.running(id).is_some();
+        let _busy = if running { None } else { Some(self.begin_busy(id)?) };
+        let files = mods::install(&self.http, meta.loader, &meta.game_version, &store.game_dir(id), project, !running).await?;
+        tracing::info!("Сервер {id}: поставлено {files:?}");
+        Ok(files)
+    }
+
+    /// Обновляет все плагины или моды, для которых вышли новые версии.
+    pub async fn update_mods(&self, id: &str) -> Result<Vec<String>> {
+        self.ensure_stopped(id, "обновить плагины и моды")?;
+        let list = self.mods(id).await?;
+        let mut updated = Vec::new();
+        for item in list.items.iter().filter(|m| m.update.is_some()) {
+            if let Some(project) = &item.project_id {
+                updated.extend(self.install_mod(id, project).await?);
+            }
+        }
+        Ok(updated)
+    }
+
+    pub async fn remove_mod(&self, id: &str, file: &str) -> Result<()> {
+        self.ensure_stopped(id, "удалить плагин или мод")?;
+        let _ops = self.mod_ops.lock().await;
+        let _busy = self.begin_busy(id)?;
+        let store = self.store();
+        let meta = store.load(id)?;
+        if meta.auth_plugin.as_deref() == Some(file) {
+            return Err(Error::invalid("Это защита ников: выключить её можно в настройках сервера, раздел «Доступ»"));
+        }
+        let path = mods::mod_path(&store.game_dir(id), meta.loader, file)?;
+        tokio::fs::remove_file(path).await?;
+        tracing::info!("Сервер {id}: удалён {file}");
+        Ok(())
     }
 
     /// Удаляет сервер с диска. `delete_tunnel`: удалить и его адрес в аккаунте
@@ -1071,7 +1135,7 @@ impl ServerManager {
 
         servers::write_eula(&game_dir, accepted_at).await?;
         // AuthMe создаёт config.yml при первом запуске: со второго запуска он говорит по-русски.
-        if meta.pirate_mode && meta.loader == providers::Loader::Paper && !meta.auth_lang_set && pirate::authme_russian(&game_dir) {
+        if meta.pirate_mode && meta.loader.is_paper_like() && !meta.auth_lang_set && pirate::authme_russian(&game_dir) {
             meta.auth_lang_set = true;
             store.save(&meta).await?;
         }
@@ -1139,7 +1203,7 @@ impl ServerManager {
             rcon_password,
             rcon: tokio::sync::Mutex::new(None),
             stats_wake: tokio::sync::Notify::new(),
-            is_paper: meta.loader == providers::Loader::Paper,
+            is_paper: meta.loader.is_paper_like(),
             auto_stop_minutes: AtomicU32::new(meta.auto_stop_minutes),
         });
         self.lock().running.insert(id.to_string(), running.clone());

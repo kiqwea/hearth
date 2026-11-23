@@ -22,6 +22,8 @@ pub const USER_AGENT: &str = concat!(
 pub enum Checksum {
     Sha1(String),
     Sha256(String),
+    /// Purpur отдаёт только MD5.
+    Md5(String),
 }
 
 #[derive(Clone)]
@@ -62,6 +64,28 @@ impl Http {
 
     pub async fn get_json<T: DeserializeOwned>(&self, service: &str, url: &str) -> Result<T> {
         let text = self.get_text(service, url).await?;
+        parse_json(service, &text)
+    }
+
+    /// POST с JSON в теле и JSON в ответе.
+    pub async fn post_json<B: serde::Serialize + ?Sized, T: DeserializeOwned>(
+        &self,
+        service: &str,
+        url: &str,
+        body: &B,
+    ) -> Result<T> {
+        let resp = self
+            .client
+            .post(url)
+            .json(body)
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(api_error(service, status.as_u16(), &text));
+        }
         parse_json(service, &text)
     }
 
@@ -161,7 +185,7 @@ impl Http {
 
         if let (Some(expected), Some(actual)) = (expected, hasher.finish()) {
             let expected_hex = match expected {
-                Checksum::Sha1(h) | Checksum::Sha256(h) => h,
+                Checksum::Sha1(h) | Checksum::Sha256(h) | Checksum::Md5(h) => h,
             };
             if !expected_hex.eq_ignore_ascii_case(&actual) {
                 let _ = tokio::fs::remove_file(&part).await;
@@ -178,6 +202,7 @@ enum Hasher {
     None,
     Sha1(Sha1),
     Sha256(Sha256),
+    Md5(md5::Md5),
 }
 
 impl Hasher {
@@ -186,6 +211,7 @@ impl Hasher {
             None => Hasher::None,
             Some(Checksum::Sha1(_)) => Hasher::Sha1(Sha1::new()),
             Some(Checksum::Sha256(_)) => Hasher::Sha256(Sha256::new()),
+            Some(Checksum::Md5(_)) => Hasher::Md5(md5::Md5::new()),
         }
     }
 
@@ -194,6 +220,7 @@ impl Hasher {
             Hasher::None => {}
             Hasher::Sha1(h) => h.update(data),
             Hasher::Sha256(h) => h.update(data),
+            Hasher::Md5(h) => h.update(data),
         }
     }
 
@@ -202,6 +229,7 @@ impl Hasher {
             Hasher::None => None,
             Hasher::Sha1(h) => Some(hex::encode(h.finalize().as_slice())),
             Hasher::Sha256(h) => Some(hex::encode(h.finalize().as_slice())),
+            Hasher::Md5(h) => Some(hex::encode(h.finalize().as_slice())),
         }
     }
 }

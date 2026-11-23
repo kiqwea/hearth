@@ -7,6 +7,7 @@ use tauri::State;
 
 use super::AppState;
 use crate::backups::{BackupInfo, BackupKind, SavedWorld};
+use crate::mods::{self, ModList, ModSearch};
 use crate::config::AppConfig;
 use crate::error::{Error, Result};
 use crate::java::InstalledJava;
@@ -65,6 +66,12 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         list_saved_worlds,
         import_world,
         open_backups_folder,
+        list_mods,
+        search_mods,
+        install_mod,
+        update_mods,
+        remove_mod,
+        open_mods_folder,
     ]
 }
 
@@ -368,6 +375,51 @@ fn open_server_folder(state: State<'_, AppState>, id: String) -> Result<()> {
     if !dir.is_dir() {
         return Err(Error::ServerNotFound(id));
     }
+    tauri_plugin_opener::open_path(dir, None::<&str>)
+        .map_err(|e| Error::other(format!("Не удалось открыть папку: {e}")))
+}
+
+#[tauri::command]
+async fn list_mods(state: State<'_, AppState>, id: String) -> Result<ModList> {
+    state.manager.mods(&id).await
+}
+
+#[tauri::command]
+async fn search_mods(state: State<'_, AppState>, id: String, query: String, offset: u32) -> Result<ModSearch> {
+    state.manager.search_mods(&id, &query, offset).await
+}
+
+/// Ставит плагин или мод с Modrinth вместе с зависимостями. Ответ: поставленные файлы.
+#[tauri::command]
+async fn install_mod(state: State<'_, AppState>, id: String, project: String) -> Result<Vec<String>> {
+    state
+        .manager
+        .install_mod(&id, &project)
+        .await
+        .inspect_err(|e| tracing::warn!("Установка {project} на сервер {id}: {e}"))
+}
+
+#[tauri::command]
+async fn update_mods(state: State<'_, AppState>, id: String) -> Result<Vec<String>> {
+    state
+        .manager
+        .update_mods(&id)
+        .await
+        .inspect_err(|e| tracing::warn!("Обновление модов сервера {id}: {e}"))
+}
+
+#[tauri::command]
+async fn remove_mod(state: State<'_, AppState>, id: String, file: String) -> Result<()> {
+    state.manager.remove_mod(&id, &file).await
+}
+
+#[tauri::command]
+fn open_mods_folder(state: State<'_, AppState>, id: String) -> Result<()> {
+    let store = state.manager.store();
+    let meta = store.load(&id)?;
+    let folder = mods::folder_name(meta.loader).ok_or_else(|| Error::invalid("У Vanilla нет папки модов"))?;
+    let dir = store.game_dir(&id).join(folder);
+    std::fs::create_dir_all(&dir)?;
     tauri_plugin_opener::open_path(dir, None::<&str>)
         .map_err(|e| Error::other(format!("Не удалось открыть папку: {e}")))
 }

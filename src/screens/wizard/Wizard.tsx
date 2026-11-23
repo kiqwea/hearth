@@ -28,7 +28,7 @@ interface FormState {
   nickProtection: boolean;
 }
 
-const LOADERS: Loader[] = ["paper", "vanilla", "fabric"];
+const LOADERS: Loader[] = ["paper", "vanilla", "fabric", "purpur"];
 
 export function Wizard() {
   const system = useHearth((s) => s.system);
@@ -161,7 +161,7 @@ function FormStep({
 
       <section aria-label={t.wizard.core} className="flex flex-col gap-2.5">
         <h2 className="m-0 text-base font-semibold">{t.wizard.core}</h2>
-        <div className="grid gap-2.5 grid-cols-[repeat(auto-fit,minmax(220px,1fr))]">
+        <div className="grid gap-2.5 grid-cols-[repeat(auto-fit,minmax(300px,1fr))]">
           {LOADERS.map((loader) => {
             const active = form.loader === loader;
             return (

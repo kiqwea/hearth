@@ -10,6 +10,7 @@ pub mod events;
 pub mod fsx;
 pub mod java;
 pub mod manager;
+pub mod mods;
 pub mod modrinth;
 pub mod net;
 pub mod paths;

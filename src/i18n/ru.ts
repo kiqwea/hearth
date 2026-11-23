@@ -23,6 +23,7 @@ export const ru = {
     vanilla: { name: "Vanilla", about: "Официальный сервер Mojang, всё как в обычной игре." },
     paper: { name: "Paper", about: "Быстрее обычного сервера, поддерживает плагины. Игрокам ничего ставить не нужно." },
     fabric: { name: "Fabric", about: "Для модов. Большинство модов нужно поставить и игрокам." },
+    purpur: { name: "Purpur", about: "Как Paper, но с сотней дополнительных настроек игры. Плагины те же." },
     recommended: "Рекомендуем",
   },
 
@@ -258,6 +259,55 @@ export const ru = {
     autoStopHint: "Сервер сам сохранит мир и выключится, чтобы не тратить память и процессор компьютера.",
     autoStopNever: "Никогда",
     minutes: (m: number) => (m >= 60 && m % 60 === 0 ? `Через ${m / 60} ч` : `Через ${m} мин`),
+  },
+
+  mods: {
+    installedPlugins: "Установленные плагины",
+    installedMods: "Установленные моды",
+    pluginsHint: "Плагины работают только на сервере: друзьям ничего ставить не нужно.",
+    modsHint: "Моды с пометкой «нужен игрокам» друзья должны поставить у себя, иначе не смогут зайти.",
+    runningHint: "Сервер работает: новые плагины и моды заработают после перезапуска. Удалять и обновлять можно на остановленном сервере.",
+    offline: "Нет связи с Modrinth: показываю файлы без названий и обновлений.",
+    emptyPlugins: "Плагинов пока нет. Найдите нужный ниже: Hearth сам скачает подходящую версию.",
+    emptyMods: "Модов пока нет. Найдите нужный ниже: Hearth сам скачает подходящую версию и всё, что ему нужно.",
+    openFolder: "Открыть папку",
+    updateAll: (n: number) => `Обновить все (${n})`,
+    update: "Обновить",
+    updateTo: (v: string) => `есть версия ${v}`,
+    updated: (n: number) => (n === 0 ? "Всё уже обновлено" : `Обновлено файлов: ${n}`),
+    remove: "Удалить",
+    removeTitle: (name: string) => `Удалить ${name}?`,
+    removeText: "Файл будет удалён из папки сервера. Его настройки и данные останутся.",
+    removed: "Удалено",
+    nickProtection: "защита ников",
+    nickProtectionHint: "Выключается в настройках сервера, раздел «Доступ»",
+    side: {
+      required: "нужен игрокам",
+      optional: "игрокам по желанию",
+      serverOnly: "только на сервере",
+      unknown: "",
+    },
+    search: "Найти на Modrinth",
+    searchPlaceholderPlugins: "Например, LuckPerms, EssentialsX, WorldEdit",
+    searchPlaceholderMods: "Например, Lithium, Simple Voice Chat, WorldEdit",
+    popular: (version: string) => `Популярное для ${version}`,
+    found: (n: number) => `Найдено: ${n}`,
+    nothing: "Ничего не нашлось под эту версию игры. Попробуйте другое название.",
+    searchFailed: "Не удалось связаться с Modrinth",
+    install: "Поставить",
+    installing: "Ставлю…",
+    installed: "Стоит",
+    installedOk: (files: string[]) =>
+      files.length <= 1 ? "Готово" : `Готово, вместе с зависимостями: ${files.length - 1}`,
+    restartToApply: "Перезапустите сервер, чтобы изменения заработали.",
+    more: "Показать ещё",
+    downloads: (n: number) =>
+      n >= 1_000_000
+        ? `${String(Math.round(n / 100_000) / 10).replace(".", ",")} млн загрузок`
+        : n >= 1000
+          ? `${Math.round(n / 1000)} тыс. загрузок`
+          : `${n} ${plural(n, "загрузка", "загрузки", "загрузок")}`,
+    by: (author: string) => `от ${author}`,
   },
 
   backups: {

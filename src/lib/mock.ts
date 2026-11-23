@@ -11,6 +11,8 @@ import type { DirectInfo } from "../bindings/DirectInfo";
 import type { PlayerInfo } from "../bindings/PlayerInfo";
 import type { ServerStats } from "../bindings/ServerStats";
 import type { InstallProgress } from "../bindings/InstallProgress";
+import type { InstalledMod } from "../bindings/InstalledMod";
+import type { ModHit } from "../bindings/ModHit";
 import type { PlayitAgentState } from "../bindings/PlayitAgentState";
 import type { PlayitStatus } from "../bindings/PlayitStatus";
 import type { ServerMeta } from "../bindings/ServerMeta";
@@ -118,6 +120,26 @@ export function createMockApi(): HearthApi {
       );
     }
     return backups.get(id)!;
+  };
+  const mods = new Map<string, InstalledMod[]>();
+  const modsOf = (id: string) => {
+    if (!mods.has(id)) {
+      const base = { description: "", iconUrl: null, nickProtection: false, sizeBytes: 900_000 };
+      mods.set(
+        id,
+        id.startsWith("modded")
+          ? [
+              { ...base, file: "fabric-api-0.140.jar", projectId: "P7dR8mSH", slug: "fabric-api", title: "Fabric API", version: "0.140.0+26.3", clientSide: "optional", update: "0.141.2+26.3" },
+              { ...base, file: "lithium-fabric-0.26.4.jar", projectId: "gvQqBUqZ", slug: "lithium", title: "Lithium", version: "mc26.3-0.26.4-fabric", clientSide: "optional", update: null },
+              { ...base, file: "create-6.1.jar", projectId: "LNytGWDc", slug: "create", title: "Create", version: "6.1.0", clientSide: "required", update: null },
+              { ...base, file: "my-local-mod.jar", projectId: null, slug: null, title: "my-local-mod", version: null, clientSide: "unknown", update: null },
+            ]
+          : id.startsWith("survival")
+            ? [{ ...base, file: "LuckPerms-Bukkit-5.5.71.jar", projectId: "Vebnzrzj", slug: "luckperms", title: "LuckPerms", version: "5.5.71", clientSide: "serverOnly", update: null }]
+            : [],
+      );
+    }
+    return mods.get(id)!;
   };
   const progress = (id: string, p: InstallProgress) => emit({ type: "install", data: { serverId: id, progress: p } });
 
@@ -452,7 +474,7 @@ export function createMockApi(): HearthApi {
     },
     setPirateMode: async (id, enable, protect) => {
       const s = servers.get(id)!;
-      const plugin = s.meta.loader === "paper" ? "AuthMe Reloaded" : s.meta.loader === "fabric" ? "EasyAuth" : null;
+      const plugin = s.meta.loader === "paper" || s.meta.loader === "purpur" ? "AuthMe Reloaded" : s.meta.loader === "fabric" ? "EasyAuth" : null;
       await wait(1800);
       s.meta.pirateMode = enable;
       s.meta.authPlugin = enable && plugin && protect ? `${plugin.split(" ")[0]}.jar` : null;
@@ -542,6 +564,49 @@ export function createMockApi(): HearthApi {
       return info;
     },
     openBackupsFolder: async () => {},
+    listMods: async (id) => {
+      await wait(400);
+      return { items: structuredClone(modsOf(id)), online: true };
+    },
+    searchMods: async (id, query, offset) => {
+      await wait(300);
+      const plugin = servers.get(id)!.meta.loader !== "fabric";
+      const all = (plugin ? MOCK_PLUGINS : MOCK_MODS).filter((h) => h.title.toLowerCase().includes(query.trim().toLowerCase()));
+      return { hits: all.slice(offset, offset + 20), total: all.length };
+    },
+    installMod: async (id, project) => {
+      await wait(1200);
+      const plugin = servers.get(id)!.meta.loader !== "fabric";
+      const hit = (plugin ? MOCK_PLUGINS : MOCK_MODS).find((h) => h.projectId === project)!;
+      const file = `${hit.slug}-1.0.jar`;
+      modsOf(id).push({
+        file,
+        projectId: hit.projectId,
+        slug: hit.slug,
+        title: hit.title,
+        description: hit.description,
+        iconUrl: hit.iconUrl,
+        version: "1.0",
+        clientSide: hit.clientSide,
+        update: null,
+        nickProtection: false,
+        sizeBytes: 1_200_000,
+      });
+      return [file];
+    },
+    updateMods: async (id) => {
+      await wait(1000);
+      const list = modsOf(id).filter((m) => m.update);
+      list.forEach((m) => {
+        m.version = m.update;
+        m.update = null;
+      });
+      return list.map((m) => m.file);
+    },
+    removeMod: async (id, file) => {
+      mods.set(id, modsOf(id).filter((m) => m.file !== file));
+    },
+    openModsFolder: async () => {},
     pickZip: async () => "C:\\Users\\Дима\\Downloads\\SkyBlock.zip",
     pickFolder: async () => null,
     pickSaveZip: async (name) => `C:\\Users\\Дима\\Downloads\\${name}`,
@@ -574,3 +639,31 @@ export function createMockApi(): HearthApi {
     },
   };
 }
+
+const hit = (projectId: string, title: string, description: string, downloads: number, clientSide: ModHit["clientSide"]): ModHit => ({
+  projectId,
+  slug: title.toLowerCase().replace(/\s+/g, "-"),
+  title,
+  description,
+  iconUrl: null,
+  author: "author",
+  downloads,
+  clientSide,
+});
+
+const MOCK_MODS: ModHit[] = [
+  hit("P7dR8mSH", "Fabric API", "Lightweight and modular API providing common hooks and intercompatibility measures.", 180_000_000, "optional"),
+  hit("gvQqBUqZ", "Lithium", "No-compromises game logic optimization mod.", 52_000_000, "optional"),
+  hit("uXXizFIs", "FerriteCore", "Memory usage optimizations.", 60_000_000, "optional"),
+  hit("9eGKb6K1", "Simple Voice Chat", "A working voice chat in Minecraft!", 40_000_000, "required"),
+  hit("LNytGWDc", "Create", "Aesthetic technology that empowers the player.", 30_000_000, "required"),
+  hit("1u6JkXh5", "WorldEdit", "A Minecraft Map Editor... that runs in-game!", 12_000_000, "optional"),
+];
+
+const MOCK_PLUGINS: ModHit[] = [
+  hit("Vebnzrzj", "LuckPerms", "A permissions plugin for Minecraft servers.", 3_000_000, "serverOnly"),
+  hit("hXiIvTyT", "EssentialsX", "The essential plugin suite for Minecraft servers.", 2_100_000, "serverOnly"),
+  hit("1u6JkXh5", "WorldEdit", "A Minecraft Map Editor... that runs in-game!", 12_000_000, "serverOnly"),
+  hit("Lu3KuzdV", "CoreProtect", "Fast, efficient block logging, rollback and restore.", 900_000, "serverOnly"),
+  hit("swbUV1cr", "BlueMap", "A 3D map of your Minecraft worlds.", 850, "serverOnly"),
+];

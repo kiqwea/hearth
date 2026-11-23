@@ -156,7 +156,7 @@ pub struct AuthPlugin {
 
 pub fn auth_plugin_for(loader: Loader) -> Option<AuthPlugin> {
     match loader {
-        Loader::Paper => Some(AuthPlugin {
+        Loader::Paper | Loader::Purpur => Some(AuthPlugin {
             title: "AuthMe Reloaded",
             project: "authmereloaded",
             loaders: &["paper", "bukkit", "spigot"],

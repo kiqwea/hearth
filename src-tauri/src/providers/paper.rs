@@ -146,6 +146,22 @@ fn not_found_to_version(e: Error, id: &str) -> Error {
     }
 }
 
+/// Минимальная Java и рекомендованные флаги JVM для версии игры. Их же берёт
+/// Purpur: он собран на Paper той же версии. `None`, если Paper такой версии не знает.
+pub async fn java_for(http: &Http, id: &str) -> Option<(u32, Vec<String>)> {
+    let all = versions(http).await.ok()?;
+    let info = all.versions.iter().find(|v| v.version.id == id)?;
+    let java_info = info.version.java.as_ref()?;
+    let major = java_info.version.as_ref()?.minimum;
+    let flags = java_info
+        .flags
+        .as_ref()
+        .map(|f| f.recommended.clone())
+        .filter(|f| !f.is_empty())
+        .unwrap_or_else(|| java::default_jvm_flags(major));
+    Some((major, flags))
+}
+
 pub async fn resolve(http: &Http, id: &str) -> Result<ServerArtifact> {
     let all = versions(http).await?;
     let info = all

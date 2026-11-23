@@ -12,7 +12,7 @@ import type { ServerSummary } from "../../bindings/ServerSummary";
 import { Button, Dialog, Spinner, Switch } from "../../components/ui";
 import { t } from "../../i18n";
 import { api, isHearthError } from "../../lib/api";
-import { isActive } from "../../lib/format";
+import { isActive, isPaperLike } from "../../lib/format";
 import { useHearth } from "../../lib/store";
 
 type Ask = { kind: "enable" } | { kind: "disable" } | { kind: "noAuth"; reason: string };
@@ -27,7 +27,7 @@ export function PirateMode({ server, onChanged }: { server: ServerSummary; onCha
   const [working, setWorking] = useState<"pirate" | "protection" | null>(null);
 
   const active = isActive(status);
-  const plugin = meta.loader === "paper" ? "AuthMe Reloaded" : meta.loader === "fabric" ? "EasyAuth" : null;
+  const plugin = isPaperLike(meta.loader) ? "AuthMe Reloaded" : meta.loader === "fabric" ? "EasyAuth" : null;
   const protectedNow = !!meta.authPlugin;
 
   async function applyPirate(enable: boolean, withProtection: boolean) {

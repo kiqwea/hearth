@@ -20,7 +20,7 @@ const CONSOLE_LIMIT = 5000;
 /** Как часто проверять обновления Hearth, пока приложение открыто. */
 const UPDATE_CHECK_INTERVAL = 6 * 60 * 60 * 1000;
 
-export type ServerTab = "overview" | "console" | "players" | "settings" | "backups";
+export type ServerTab = "overview" | "console" | "players" | "settings" | "backups" | "mods";
 
 export type View =
   | { kind: "loading" }

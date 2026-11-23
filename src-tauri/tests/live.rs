@@ -503,3 +503,73 @@ async fn live_backups_vanilla() {
 async fn live_backups_fabric() {
     run_backups(Loader::Fabric).await;
 }
+
+/// Плагины и моды с Modrinth на настоящем сервере: поставить, запустить,
+/// убедиться, что загрузился, и удалить на остановленном.
+async fn run_mods(loader: Loader, project: &str, marker: &str) {
+    let shared = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("hearth-live");
+    let servers = tempfile::tempdir().unwrap();
+    let paths = Paths::new(shared.join("config"), shared.join("data"));
+    let http = Http::new(paths.cache_dir()).unwrap();
+    let manager = test_manager(&paths, &http, servers.path(), Arc::new(PrintSink::default()));
+    let version = providers::list_versions(&http, loader, false).await.unwrap()[0].id.clone();
+    println!("== моды {loader:?} {version}: {project}");
+    let id = manager
+        .create(CreateServerRequest {
+            name: format!("Моды {loader:?}"),
+            loader,
+            game_version: version,
+            memory_mb: 2048,
+            port: Some(free_port()),
+            game_mode: GameMode::Creative,
+            difficulty: Difficulty::Peaceful,
+            max_players: 3,
+            seed: None,
+            eula_accepted: true,
+            pirate_mode: false,
+            nick_protection: false,
+        })
+        .await
+        .unwrap()
+        .id;
+
+    let found = manager.search_mods(&id, marker, 0).await.unwrap();
+    assert!(found.hits.iter().any(|h| h.title.contains(marker)), "поиск находит {marker}");
+    let files = manager.install_mod(&id, project).await.unwrap();
+    println!("== поставлено: {files:?}");
+    assert!(!files.is_empty());
+
+    manager.start(&id).await.unwrap();
+    wait_running(&manager, &id).await;
+    assert!(
+        manager.console(&id).iter().any(|l| l.text.contains(marker)),
+        "в логе видно, что {marker} загрузился"
+    );
+    // Статистика (команды Paper для Purpur) работает.
+    let started = Instant::now();
+    while manager.get(&id).unwrap().stats.and_then(|s| s.tps).is_none() {
+        assert!(started.elapsed() < Duration::from_secs(30), "TPS не пришёл");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    let listed = manager.mods(&id).await.unwrap();
+    println!("== список: {:?}", listed.items.iter().map(|m| (&m.title, &m.version)).collect::<Vec<_>>());
+    assert!(listed.online && listed.items.iter().any(|m| m.title.contains(marker)));
+    assert!(manager.remove_mod(&id, &files[0]).await.is_err(), "на работающем не удаляет");
+    manager.stop(&id, STOP_TIMEOUT).await.unwrap();
+    for file in &files {
+        manager.remove_mod(&id, file).await.unwrap();
+    }
+    assert!(manager.mods(&id).await.unwrap().items.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_mods_purpur() {
+    run_mods(Loader::Purpur, "luckperms", "LuckPerms").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_mods_fabric() {
+    run_mods(Loader::Fabric, "gvQqBUqZ", "Lithium").await;
+}

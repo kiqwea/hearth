@@ -50,7 +50,7 @@ export function formatMb(bytes: number): string {
 /** Размер файла: «850 МБ», «1,4 ГБ». */
 export function formatSize(bytes: number): string {
   const mb = bytes / (1024 * 1024);
-  if (mb < 1) return bytes === 0 ? "0 МБ" : "меньше 1 МБ";
+  if (mb < 1) return `${Math.max(1, Math.round(bytes / 1024))} КБ`;
   if (mb < 1024) return `${Math.round(mb)} МБ`;
   return `${String(Math.round((mb / 1024) * 10) / 10).replace(".", ",")} ГБ`;
 }
@@ -116,4 +116,9 @@ export async function copyText(text: string): Promise<boolean> {
     area.remove();
     return ok;
   }
+}
+
+/** Paper и его форки: плагины вместо модов, игрокам ничего ставить не нужно. */
+export function isPaperLike(loader: Loader): boolean {
+  return loader === "paper" || loader === "purpur";
 }

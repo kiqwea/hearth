@@ -5,10 +5,11 @@ import type { ServerSummary } from "../../bindings/ServerSummary";
 import { Button, Chip, Dialog, IconButton, Spinner, StatusPill } from "../../components/ui";
 import { t } from "../../i18n";
 import { api, isHearthError } from "../../lib/api";
-import { formatGb, formatUptime, serverTitle, statusText, statusTone } from "../../lib/format";
+import { formatGb, formatUptime, isPaperLike, serverTitle, statusText, statusTone } from "../../lib/format";
 import { useHearth, type ServerTab } from "../../lib/store";
 import { BackupsTab } from "./BackupsTab";
 import { ConsoleTab } from "./ConsoleTab";
+import { ModsTab } from "./ModsTab";
 import { Overview } from "./Overview";
 import { PlayersTab } from "./PlayersTab";
 import { SettingsTab } from "./SettingsTab";
@@ -25,14 +26,14 @@ export function ServerView({ id, tab }: { id: string; tab: ServerTab }) {
     );
   }
 
-  const extensions = server.meta.loader === "paper" ? t.tabs.plugins : server.meta.loader === "fabric" ? t.tabs.mods : null;
+  const extensions = isPaperLike(server.meta.loader) ? t.tabs.plugins : server.meta.loader === "fabric" ? t.tabs.mods : null;
   const tabs: Array<{ key: ServerTab | null; label: string }> = [
     { key: "overview", label: t.tabs.overview },
     { key: "console", label: t.tabs.console },
     { key: "players", label: t.tabs.players },
+    ...(extensions ? [{ key: "mods" as const, label: extensions }] : []),
     { key: "backups", label: t.tabs.backups },
     { key: "settings", label: t.tabs.settings },
-    ...(extensions ? [{ key: null, label: extensions }] : []),
   ];
 
   return (
@@ -65,6 +66,7 @@ export function ServerView({ id, tab }: { id: string; tab: ServerTab }) {
       {tab === "overview" && <Overview server={server} />}
       {tab === "console" && <ConsoleTab id={id} />}
       {tab === "players" && <PlayersTab server={server} />}
+      {tab === "mods" && extensions && <ModsTab server={server} />}
       {tab === "backups" && <BackupsTab server={server} />}
       {tab === "settings" && <SettingsTab server={server} />}
     </div>

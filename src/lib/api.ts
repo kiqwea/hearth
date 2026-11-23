@@ -9,6 +9,8 @@ import { listen } from "@tauri-apps/api/event";
 
 import type { AppConfig } from "../bindings/AppConfig";
 import type { BackupInfo } from "../bindings/BackupInfo";
+import type { ModList } from "../bindings/ModList";
+import type { ModSearch } from "../bindings/ModSearch";
 import type { SavedWorld } from "../bindings/SavedWorld";
 import type { ConsoleLine } from "../bindings/ConsoleLine";
 import type { CreateServerRequest } from "../bindings/CreateServerRequest";
@@ -106,6 +108,15 @@ export interface HearthApi {
   /** Папка мира или zip. Сервер должен быть остановлен. */
   importWorld(id: string, source: string): Promise<BackupInfo | null>;
   openBackupsFolder(id: string): Promise<void>;
+  // Плагины и моды (Modrinth)
+  listMods(id: string): Promise<ModList>;
+  searchMods(id: string, query: string, offset: number): Promise<ModSearch>;
+  /** Ставит проект с зависимостями. Возвращает поставленные файлы. */
+  installMod(id: string, project: string): Promise<string[]>;
+  /** Сервер должен быть остановлен. */
+  updateMods(id: string): Promise<string[]>;
+  removeMod(id: string, file: string): Promise<void>;
+  openModsFolder(id: string): Promise<void>;
   /** Системные окна выбора файла. `null`, если пользователь передумал. */
   pickZip(): Promise<string | null>;
   pickFolder(): Promise<string | null>;
@@ -201,6 +212,12 @@ const tauriApi: HearthApi = {
   listSavedWorlds: () => invoke("list_saved_worlds"),
   importWorld: (id, source) => invoke("import_world", { id, source }),
   openBackupsFolder: (id) => invoke("open_backups_folder", { id }),
+  listMods: (id) => invoke("list_mods", { id }),
+  searchMods: (id, query, offset) => invoke("search_mods", { id, query, offset }),
+  installMod: (id, project) => invoke("install_mod", { id, project }),
+  updateMods: (id) => invoke("update_mods", { id }),
+  removeMod: (id, file) => invoke("remove_mod", { id, file }),
+  openModsFolder: (id) => invoke("open_mods_folder", { id }),
   pickZip: async () => {
     const { open } = await import("@tauri-apps/plugin-dialog");
     const path = await open({ multiple: false, filters: [{ name: "Zip-архив", extensions: ["zip"] }] });
