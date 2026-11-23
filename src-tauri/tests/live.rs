@@ -6,6 +6,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use hearth_lib::backups::BackupKind;
 use hearth_lib::events::{Event, EventSink};
 use hearth_lib::manager::{ServerManager, STOP_TIMEOUT};
 use hearth_lib::net::Http;
@@ -379,4 +380,126 @@ async fn live_players_vanilla() {
 #[ignore]
 async fn live_players_fabric() {
     run_players(Loader::Fabric).await;
+}
+
+fn zip_names(path: &std::path::Path) -> Vec<String> {
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
+    (0..archive.len()).map(|i| archive.by_index(i).unwrap().name().unwrap().to_string()).collect()
+}
+
+/// Миры и копии на настоящем сервере: копия и экспорт на работающем сервере
+/// (save-off → save-all flush → zip → save-on), автовыключение пустого сервера,
+/// восстановление, импорт мира в формате одиночной игры и запуск с ним.
+async fn run_backups(loader: Loader) {
+    let shared = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("hearth-live");
+    let servers = tempfile::tempdir().unwrap();
+    let paths = Paths::new(shared.join("config"), shared.join("data"));
+    let http = Http::new(paths.cache_dir()).unwrap();
+    let manager = test_manager(&paths, &http, servers.path(), Arc::new(PrintSink::default()));
+    let version = providers::list_versions(&http, loader, false).await.unwrap()[0].id.clone();
+    println!("== бэкапы {loader:?} {version}");
+    let id = manager
+        .create(CreateServerRequest {
+            name: format!("Бэкапы {loader:?}"),
+            loader,
+            game_version: version,
+            memory_mb: 2048,
+            port: Some(free_port()),
+            game_mode: GameMode::Creative,
+            difficulty: Difficulty::Peaceful,
+            max_players: 3,
+            seed: Some("hearth".into()),
+            eula_accepted: true,
+            pirate_mode: false,
+            nick_protection: false,
+        })
+        .await
+        .unwrap()
+        .id;
+    let meta = manager.store().load(&id).unwrap();
+    assert!(meta.auto_backup.enabled && meta.auto_stop_minutes == 0, "настройки по умолчанию");
+    manager.start(&id).await.unwrap();
+    wait_running(&manager, &id).await;
+
+    // Копия на работающем сервере.
+    let info = manager.backup(&id, BackupKind::Manual).await.unwrap().expect("мир есть");
+    println!("== копия {} ({} байт)", info.file, info.size_bytes);
+    let zip = manager.store().backups_dir(&id).join(&info.file);
+    let names = zip_names(&zip);
+    assert!(names.contains(&"world/level.dat".to_string()), "{names:?}");
+    assert!(names.iter().any(|n| n.ends_with(".mca")), "регионы мира в копии");
+    assert!(!names.iter().any(|n| n.ends_with("session.lock")));
+    let reply = manager.rcon(&id, "save-on").await.unwrap();
+    println!("== save-on после копии: {reply}");
+    assert!(reply.contains("already"), "автосохранение снова включено: {reply}");
+
+    // Экспорт мира для одиночной игры, тоже на ходу.
+    let out = tempfile::tempdir().unwrap();
+    let exported = out.path().join("world.zip");
+    manager.export_world(&id, exported.to_str().unwrap()).await.unwrap();
+    let names = zip_names(&exported);
+    let folder = format!("Бэкапы {loader:?}");
+    assert!(names.contains(&format!("{folder}/level.dat")), "{names:?}");
+    // Ад внутри мира: `DIM-1/` у старых версий, `dimensions/minecraft/the_nether/` у 26.x.
+    // Регионы ада есть только у Paper: Vanilla и Fabric не создают их, пока туда никто не зашёл.
+    assert!(
+        names.iter().any(|n| n.contains("/DIM-1/") || n.contains("/the_nether/")),
+        "ад внутри мира: {names:?}"
+    );
+
+    // Восстановление и импорт только на остановленном сервере.
+    assert!(manager.restore_backup(&id, &info.file).await.is_err());
+
+    // Автовыключение: «минута» в тесте длится секунду.
+    manager.set_minute_for_tests(Duration::from_secs(1));
+    manager
+        .update(&id, hearth_lib::servers::ServerPatch { auto_stop_minutes: Some(5), ..Default::default() })
+        .await
+        .unwrap();
+    let waiting = Instant::now();
+    while manager.status(&id) != ServerStatus::Stopped {
+        assert!(waiting.elapsed() < Duration::from_secs(90), "пустой сервер не выключился сам");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    assert!(manager.console(&id).iter().any(|l| l.text.contains("никого нет")), "в консоли объяснение");
+    println!("== выключился сам за {:?}", waiting.elapsed());
+
+    let game = manager.store().game_dir(&id);
+    std::fs::write(game.join("world").join("marker.txt"), b"after").unwrap();
+    let safety = manager.restore_backup(&id, &info.file).await.unwrap().expect("страховочная копия");
+    assert!(!game.join("world/marker.txt").exists(), "мир вернулся к копии");
+    assert!(zip_names(&manager.store().backups_dir(&id).join(&safety.file)).contains(&"world/marker.txt".to_string()));
+
+    // Импорт мира в формате одиночной игры (это наш экспорт) и запуск с ним.
+    manager.import_world(&id, exported.to_str().unwrap()).await.unwrap();
+    assert!(game.join("world/level.dat").is_file());
+    let kinds: Vec<BackupKind> = manager.backups(&id).unwrap().into_iter().map(|b| b.kind).collect();
+    println!("== копии: {kinds:?}");
+    assert!(kinds.contains(&BackupKind::BeforeImport) && kinds.contains(&BackupKind::BeforeRestore));
+
+    manager
+        .update(&id, hearth_lib::servers::ServerPatch { auto_stop_minutes: Some(0), ..Default::default() })
+        .await
+        .unwrap();
+    manager.start(&id).await.unwrap();
+    wait_running(&manager, &id).await;
+    manager.stop(&id, STOP_TIMEOUT).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_backups_paper() {
+    run_backups(Loader::Paper).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_backups_vanilla() {
+    run_backups(Loader::Vanilla).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_backups_fabric() {
+    run_backups(Loader::Fabric).await;
 }

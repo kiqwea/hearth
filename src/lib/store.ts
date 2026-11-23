@@ -20,7 +20,7 @@ const CONSOLE_LIMIT = 5000;
 /** Как часто проверять обновления Hearth, пока приложение открыто. */
 const UPDATE_CHECK_INTERVAL = 6 * 60 * 60 * 1000;
 
-export type ServerTab = "overview" | "console" | "players" | "settings";
+export type ServerTab = "overview" | "console" | "players" | "settings" | "backups";
 
 export type View =
   | { kind: "loading" }
@@ -59,6 +59,10 @@ interface HearthState {
   directTrying: Record<string, boolean>;
   /** Почему напрямую не получилось (показываем рядом с предложением playit). */
   directReason: Record<string, string>;
+  /** Сейчас делается копия мира. */
+  backupBusy: Record<string, boolean>;
+  /** Растёт, когда список копий мог измениться: вкладка «Бэкапы» перечитывает его. */
+  backupsRev: Record<string, number>;
 
   /**
    * «Включить доступ для друзей»: сначала напрямую (порт на роутере), если не
@@ -109,6 +113,8 @@ export const useHearth = create<HearthState>((set, get) => ({
   accessBusy: {},
   directTrying: {},
   directReason: {},
+  backupBusy: {},
+  backupsRev: {},
 
   async connectFriendAccess(id, options) {
     const meta = get().servers[id]?.meta;
@@ -338,6 +344,14 @@ function handleEvent(event: Event) {
         const existing = st.servers[serverId];
         return existing ? { servers: { ...st.servers, [serverId]: { ...existing, stats } } } : {};
       });
+      break;
+    }
+    case "backups": {
+      const { serverId, inProgress } = event.data;
+      useHearth.setState((st) => ({
+        backupBusy: { ...st.backupBusy, [serverId]: inProgress },
+        backupsRev: { ...st.backupsRev, [serverId]: (st.backupsRev[serverId] ?? 0) + 1 },
+      }));
       break;
     }
     case "direct": {

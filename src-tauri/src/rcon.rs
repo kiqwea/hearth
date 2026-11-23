@@ -35,7 +35,7 @@ impl Rcon {
         stream.set_nodelay(true)?;
         let mut rcon = Self { stream, next_id: 1 };
         let id = rcon.send(LOGIN, password).await?;
-        let (reply_id, _) = rcon.read_packet().await?;
+        let (reply_id, _) = rcon.read_packet(TIMEOUT).await?;
         if reply_id == -1 || reply_id != id {
             return Err(rcon_error("неверный пароль"));
         }
@@ -57,7 +57,7 @@ impl Rcon {
         Ok(id)
     }
 
-    async fn read_packet(&mut self) -> Result<(i32, String)> {
+    async fn read_packet(&mut self, timeout: Duration) -> Result<(i32, String)> {
         let read = async {
             let len = self.stream.read_i32_le().await?;
             if !(10..=1_048_576).contains(&len) {
@@ -69,16 +69,22 @@ impl Rcon {
             let body = String::from_utf8_lossy(&buf[8..buf.len() - 2]).into_owned();
             Ok((id, body))
         };
-        tokio::time::timeout(TIMEOUT, read)
+        tokio::time::timeout(timeout, read)
             .await
             .map_err(|_| rcon_error("сервер не ответил вовремя"))?
     }
 
     /// Выполняет команду (без слэша) и возвращает ответ сервера без цветовых кодов.
     pub async fn command(&mut self, command: &str) -> Result<String> {
+        self.command_timeout(command, TIMEOUT).await
+    }
+
+    /// Как `command`, но со своим временем ожидания ответа (`save-all flush`
+    /// на большом мире отвечает не сразу).
+    pub async fn command_timeout(&mut self, command: &str, timeout: Duration) -> Result<String> {
         let id = self.send(COMMAND, command).await?;
         loop {
-            let (reply_id, body) = self.read_packet().await?;
+            let (reply_id, body) = self.read_packet(timeout).await?;
             if reply_id == id {
                 return Ok(strip_colors(&body));
             }

@@ -6,6 +6,7 @@
 use tauri::State;
 
 use super::AppState;
+use crate::backups::{BackupInfo, BackupKind, SavedWorld};
 use crate::config::AppConfig;
 use crate::error::{Error, Result};
 use crate::java::InstalledJava;
@@ -54,7 +55,90 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         set_nick_protection,
         get_players,
         player_action,
+        list_backups,
+        backup_in_progress,
+        create_backup,
+        delete_backup,
+        restore_backup,
+        export_backup,
+        export_world,
+        list_saved_worlds,
+        import_world,
+        open_backups_folder,
     ]
+}
+
+#[tauri::command]
+fn list_backups(state: State<'_, AppState>, id: String) -> Result<Vec<BackupInfo>> {
+    state.manager.backups(&id)
+}
+
+#[tauri::command]
+fn backup_in_progress(state: State<'_, AppState>, id: String) -> bool {
+    state.manager.backup_in_progress(&id)
+}
+
+/// Копия мира сейчас (и на работающем сервере). `null`, если мира ещё нет.
+#[tauri::command]
+async fn create_backup(state: State<'_, AppState>, id: String) -> Result<Option<BackupInfo>> {
+    state
+        .manager
+        .backup(&id, BackupKind::Manual)
+        .await
+        .inspect_err(|e| tracing::warn!("Бэкап сервера {id}: {e}"))
+}
+
+#[tauri::command]
+async fn delete_backup(state: State<'_, AppState>, id: String, file: String) -> Result<()> {
+    state.manager.delete_backup(&id, &file).await
+}
+
+/// Возвращает мир из копии. Ответ: страховочная копия мира, который был до этого.
+#[tauri::command]
+async fn restore_backup(state: State<'_, AppState>, id: String, file: String) -> Result<Option<BackupInfo>> {
+    state
+        .manager
+        .restore_backup(&id, &file)
+        .await
+        .inspect_err(|e| tracing::warn!("Восстановление сервера {id} из {file}: {e}"))
+}
+
+#[tauri::command]
+async fn export_backup(state: State<'_, AppState>, id: String, file: String, dest: String) -> Result<()> {
+    state.manager.export_backup(&id, &file, &dest).await
+}
+
+#[tauri::command]
+async fn export_world(state: State<'_, AppState>, id: String, dest: String) -> Result<()> {
+    state
+        .manager
+        .export_world(&id, &dest)
+        .await
+        .inspect_err(|e| tracing::warn!("Экспорт мира сервера {id}: {e}"))
+}
+
+#[tauri::command]
+async fn list_saved_worlds(state: State<'_, AppState>) -> Result<Vec<SavedWorld>> {
+    state.manager.saved_worlds().await
+}
+
+/// Мир из одиночной игры (папка) или из zip. Ответ: страховочная копия прежнего мира.
+#[tauri::command]
+async fn import_world(state: State<'_, AppState>, id: String, source: String) -> Result<Option<BackupInfo>> {
+    state
+        .manager
+        .import_world(&id, &source)
+        .await
+        .inspect_err(|e| tracing::warn!("Импорт мира в сервер {id}: {e}"))
+}
+
+#[tauri::command]
+fn open_backups_folder(state: State<'_, AppState>, id: String) -> Result<()> {
+    servers::validate_id(&id)?;
+    let dir = state.manager.store().backups_dir(&id);
+    std::fs::create_dir_all(&dir)?;
+    tauri_plugin_opener::open_path(dir, None::<&str>)
+        .map_err(|e| Error::other(format!("Не удалось открыть папку: {e}")))
 }
 
 #[tauri::command]

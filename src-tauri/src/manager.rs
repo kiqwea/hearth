@@ -9,9 +9,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
@@ -21,7 +21,7 @@ use ts_rs::TS;
 
 use crate::error::{Error, Result};
 use crate::events::{
-    ConsoleEvent, Event, EventSink, InstallEvent, InstallProgress, InstallStage, StatusEvent,
+    BackupsEvent, ConsoleEvent, Event, EventSink, InstallEvent, InstallProgress, InstallStage, StatusEvent,
 };
 use crate::java::{self, JavaManager};
 use crate::net::Http;
@@ -33,7 +33,7 @@ use crate::servers::{
 };
 use uuid::Uuid;
 
-use crate::backups;
+use crate::backups::{self, BackupInfo, BackupKind, SavedWorld, WorldSource};
 use crate::direct::{DirectInfo, DirectManager, DirectState};
 use crate::pirate;
 use crate::players::{self, PlayerAction, PlayerInfo, ServerStats, StatsEvent};
@@ -98,6 +98,8 @@ struct RunningServer {
     /// Разбудить сбор статистики раньше срока (игрок зашёл или вышел, выполнена команда).
     stats_wake: tokio::sync::Notify,
     is_paper: bool,
+    /// Выключить, если никого нет столько минут (0 — не выключать). Меняется из настроек на ходу.
+    auto_stop_minutes: AtomicU32,
 }
 
 #[derive(Default)]
@@ -105,6 +107,8 @@ struct Inner {
     running: HashMap<String, Arc<RunningServer>>,
     /// Серверы, которые сейчас устанавливаются, запускаются или удаляются.
     busy: HashSet<String>,
+    /// Серверы, мир которых сейчас копируется.
+    backing_up: HashSet<String>,
     statuses: HashMap<String, ServerStatus>,
     consoles: HashMap<String, ConsoleBuffer>,
     /// Последняя статистика запущенных серверов.
@@ -125,6 +129,8 @@ pub struct ServerManager {
     direct: Arc<DirectManager>,
     /// Включение и отключение доступа для друзей идут по очереди, чтобы не создать два туннеля.
     access_ops: tokio::sync::Mutex<()>,
+    /// Длина «минуты» автовыключения в миллисекундах. В живых тестах её сокращают.
+    minute_ms: AtomicU64,
 }
 
 /// Снимает отметку «занят», когда операция закончилась (в том числе с ошибкой).
@@ -137,6 +143,39 @@ impl Drop for BusyGuard<'_> {
     fn drop(&mut self) {
         self.manager.lock().busy.remove(&self.id);
     }
+}
+
+/// Снимает отметку «копируется» и сообщает интерфейсу, что список копий мог измениться.
+struct BackupGuard<'a> {
+    manager: &'a ServerManager,
+    id: String,
+}
+
+impl Drop for BackupGuard<'_> {
+    fn drop(&mut self) {
+        self.manager.lock().backing_up.remove(&self.id);
+        self.manager.emit_backups(&self.id, false);
+    }
+}
+
+/// Сколько ждать `save-all flush`: большой мир сохраняется не мгновенно.
+const FLUSH_TIMEOUT: Duration = Duration::from_secs(120);
+/// Первый автобэкап — не раньше, чем через столько после запуска.
+const FIRST_AUTO_BACKUP: Duration = Duration::from_secs(10 * 60);
+
+/// «15 мин», «2 ч».
+fn minutes_text(m: u32) -> String {
+    if m >= 60 && m.is_multiple_of(60) { format!("{} ч", m / 60) } else { format!("{m} мин") }
+}
+
+/// Имя папки мира из server.properties.
+fn level_name(store: &ServerStore, id: &str) -> String {
+    store
+        .read_properties(id)
+        .ok()
+        .and_then(|p| p.get("level-name").map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "world".into())
 }
 
 impl ServerManager {
@@ -182,7 +221,14 @@ impl ServerManager {
             job,
             playit,
             access_ops: tokio::sync::Mutex::new(()),
+            minute_ms: AtomicU64::new(60_000),
         })
+    }
+
+    /// Для живых тестов: сколько длится «минута» автовыключения.
+    #[doc(hidden)]
+    pub fn set_minute_for_tests(&self, minute: Duration) {
+        self.minute_ms.store(minute.as_millis() as u64, Ordering::Relaxed);
     }
 
     pub fn playit(&self) -> &Arc<PlayitManager> {
@@ -225,6 +271,9 @@ impl ServerManager {
         if inner.running.contains_key(id) {
             return Err(Error::AlreadyRunning);
         }
+        if inner.backing_up.contains(id) {
+            return Err(Error::invalid("Сейчас делается копия мира, подождите немного"));
+        }
         if !inner.busy.insert(id.to_string()) {
             return Err(Error::Busy);
         }
@@ -232,6 +281,28 @@ impl ServerManager {
             manager: self,
             id: id.to_string(),
         })
+    }
+
+    fn begin_backup(&self, id: &str) -> Result<BackupGuard<'_>> {
+        if !self.lock().backing_up.insert(id.to_string()) {
+            return Err(Error::invalid("Копия мира уже делается, подождите немного"));
+        }
+        self.emit_backups(id, true);
+        Ok(BackupGuard {
+            manager: self,
+            id: id.to_string(),
+        })
+    }
+
+    fn emit_backups(&self, id: &str, in_progress: bool) {
+        self.sink.emit(Event::Backups(BackupsEvent {
+            server_id: id.to_string(),
+            in_progress,
+        }));
+    }
+
+    pub fn backup_in_progress(&self, id: &str) -> bool {
+        self.lock().backing_up.contains(id)
     }
 
     fn running(&self, id: &str) -> Option<Arc<RunningServer>> {
@@ -319,8 +390,183 @@ impl ServerManager {
         if let Some(mb) = patch.memory_mb {
             meta.memory_mb = servers::validate_memory(mb)?;
         }
+        if let Some(auto) = patch.auto_backup {
+            meta.auto_backup = auto.validate()?;
+        }
+        if let Some(minutes) = patch.auto_stop_minutes {
+            meta.auto_stop_minutes = servers::validate_auto_stop(minutes)?;
+        }
         store.save(&meta).await?;
+        // Автовыключение работает сразу, без перезапуска.
+        if let Some(running) = self.running(id) {
+            running.auto_stop_minutes.store(meta.auto_stop_minutes, Ordering::SeqCst);
+        }
         Ok(meta)
+    }
+
+    // ---- миры и резервные копии ----
+
+    /// Копии мира сервера, новые первыми.
+    pub fn backups(&self, id: &str) -> Result<Vec<BackupInfo>> {
+        servers::validate_id(id)?;
+        Ok(backups::list(&self.store().backups_dir(id)))
+    }
+
+    /// Пока сервер работает, он постоянно дописывает мир. Чтобы копия была
+    /// целой: `save-off` → `save-all flush` → работа с файлами → `save-on`
+    /// (даже если работа не удалась).
+    async fn with_saving_paused<T>(
+        running: &RunningServer,
+        work: impl std::future::Future<Output = Result<T>>,
+    ) -> Result<T> {
+        let prefix = players::command_prefix(running.is_paper);
+        Self::rcon_command(running, &format!("{prefix}save-off")).await?;
+        let result = async {
+            Self::rcon_long(running, &format!("{prefix}save-all flush"), FLUSH_TIMEOUT).await?;
+            work.await
+        }
+        .await;
+        if let Err(e) = Self::rcon_command(running, &format!("{prefix}save-on")).await {
+            tracing::warn!("Не удалось вернуть автосохранение мира (save-on): {e}");
+        }
+        result
+    }
+
+    /// Делает копию мира сейчас. Работает и на запущенном сервере.
+    /// `None`, если мира ещё нет (сервер ни разу не запускался).
+    pub async fn backup(&self, id: &str, kind: BackupKind) -> Result<Option<BackupInfo>> {
+        let store = self.store();
+        let meta = store.load(id)?;
+        let game_dir = store.game_dir(id);
+        let level = level_name(&store, id);
+        let dir = store.backups_dir(id);
+        let path = match self.running(id) {
+            Some(running) => {
+                if self.status(id) != ServerStatus::Running {
+                    return Err(Error::invalid("Подождите, пока сервер запустится"));
+                }
+                let _backup = self.begin_backup(id)?;
+                Self::with_saving_paused(&running, backups::backup_world(&game_dir, &level, &dir, kind)).await?
+            }
+            None => {
+                let _busy = self.begin_busy(id)?;
+                let _backup = self.begin_backup(id)?;
+                backups::backup_world(&game_dir, &level, &dir, kind).await?
+            }
+        };
+        let Some(path) = path else { return Ok(None) };
+        if kind == BackupKind::Auto {
+            let keep = meta.auto_backup.keep as usize;
+            let dir = dir.clone();
+            let removed = tokio::task::spawn_blocking(move || backups::prune_auto(&dir, keep)).await?;
+            if removed > 0 {
+                tracing::info!("Сервер {id}: удалено старых автобэкапов: {removed}");
+            }
+        }
+        let file = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        Ok(backups::list(&dir).into_iter().find(|b| b.file == file))
+    }
+
+    pub async fn delete_backup(&self, id: &str, file: &str) -> Result<()> {
+        servers::validate_id(id)?;
+        let path = backups::backup_path(&self.store().backups_dir(id), file)?;
+        tokio::fs::remove_file(path).await?;
+        self.emit_backups(id, false);
+        Ok(())
+    }
+
+    /// Копирует файл копии туда, куда выбрал пользователь.
+    pub async fn export_backup(&self, id: &str, file: &str, dest: &str) -> Result<()> {
+        servers::validate_id(id)?;
+        let path = backups::backup_path(&self.store().backups_dir(id), file)?;
+        tokio::fs::copy(path, dest).await?;
+        Ok(())
+    }
+
+    /// Мир одним zip для одиночной игры. Работает и на запущенном сервере.
+    pub async fn export_world(&self, id: &str, dest: &str) -> Result<()> {
+        let store = self.store();
+        let meta = store.load(id)?;
+        let game_dir = store.game_dir(id);
+        let level = level_name(&store, id);
+        let dest = std::path::Path::new(dest);
+        let work = backups::export_world(&game_dir, &level, &meta.name, dest);
+        match self.running(id) {
+            Some(running) => {
+                if self.status(id) != ServerStatus::Running {
+                    return Err(Error::invalid("Подождите, пока сервер запустится"));
+                }
+                let _backup = self.begin_backup(id)?;
+                Self::with_saving_paused(&running, work).await
+            }
+            None => {
+                let _busy = self.begin_busy(id)?;
+                work.await
+            }
+        }
+    }
+
+    fn ensure_stopped(&self, id: &str, what: &str) -> Result<()> {
+        if self.running(id).is_some() {
+            return Err(Error::invalid(format!("Остановите сервер, чтобы {what}")));
+        }
+        Ok(())
+    }
+
+    /// Возвращает мир из копии. Текущий мир перед этим тоже сохраняется в копию.
+    /// Возвращает эту страховочную копию.
+    pub async fn restore_backup(&self, id: &str, file: &str) -> Result<Option<BackupInfo>> {
+        self.ensure_stopped(id, "восстановить копию мира")?;
+        let _busy = self.begin_busy(id)?;
+        let store = self.store();
+        store.load(id)?;
+        let dir = store.backups_dir(id);
+        let source = backups::backup_path(&dir, file)?;
+        self.replace_world(&store, id, WorldSource::Zip(&source), BackupKind::BeforeRestore).await
+    }
+
+    /// Ставит на сервер мир из одиночной игры (папка с level.dat) или из zip.
+    /// Текущий мир перед этим сохраняется в копию.
+    pub async fn import_world(&self, id: &str, source: &str) -> Result<Option<BackupInfo>> {
+        self.ensure_stopped(id, "заменить мир")?;
+        let _busy = self.begin_busy(id)?;
+        let store = self.store();
+        store.load(id)?;
+        let path = std::path::Path::new(source);
+        let source = if path.is_dir() {
+            backups::check_world_folder(path)?;
+            WorldSource::Folder(path)
+        } else if path.is_file() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip")) {
+            WorldSource::Zip(path)
+        } else {
+            return Err(Error::invalid("Выберите папку мира или zip-архив с миром"));
+        };
+        self.replace_world(&store, id, source, BackupKind::BeforeImport).await
+    }
+
+    async fn replace_world(
+        &self,
+        store: &ServerStore,
+        id: &str,
+        source: WorldSource<'_>,
+        kind: BackupKind,
+    ) -> Result<Option<BackupInfo>> {
+        let game_dir = store.game_dir(id);
+        let level = level_name(store, id);
+        let dir = store.backups_dir(id);
+        let safety = {
+            let _backup = self.begin_backup(id)?;
+            backups::backup_world(&game_dir, &level, &dir, kind).await?
+        };
+        backups::replace_world(source, &game_dir, &level, &store.staging_dir(id)).await?;
+        tracing::info!("Сервер {id}: мир заменён ({kind:?})");
+        let safety_file = safety.map(|p| p.file_name().unwrap_or_default().to_string_lossy().into_owned());
+        Ok(safety_file.and_then(|f| backups::list(&dir).into_iter().find(|b| b.file == f)))
+    }
+
+    /// Миры одиночной игры на этом компьютере.
+    pub async fn saved_worlds(&self) -> Result<Vec<SavedWorld>> {
+        Ok(tokio::task::spawn_blocking(backups::saved_worlds).await?)
     }
 
     /// Удаляет сервер с диска. `delete_tunnel`: удалить и его адрес в аккаунте
@@ -409,7 +655,7 @@ impl ServerManager {
             &game_dir,
             &level,
             &store.backups_dir(id),
-            if enable { "pirate-on" } else { "pirate-off" },
+            BackupKind::Pirate,
         )
         .await?;
 
@@ -894,6 +1140,7 @@ impl ServerManager {
             rcon: tokio::sync::Mutex::new(None),
             stats_wake: tokio::sync::Notify::new(),
             is_paper: meta.loader == providers::Loader::Paper,
+            auto_stop_minutes: AtomicU32::new(meta.auto_stop_minutes),
         });
         self.lock().running.insert(id.to_string(), running.clone());
         self.spawn_stats(id, running.clone());
@@ -1014,6 +1261,54 @@ impl ServerManager {
         unreachable!("цикл возвращает результат на второй попытке")
     }
 
+    /// Долгая команда (`save-all flush`): без повтора, со своим временем ожидания.
+    async fn rcon_long(running: &RunningServer, command: &str, timeout: Duration) -> Result<String> {
+        let mut guard = running.rcon.lock().await;
+        if guard.is_none() {
+            *guard = Some(Rcon::connect(running.rcon_port, &running.rcon_password).await?);
+        }
+        let result = guard.as_mut().expect("connected").command_timeout(command, timeout).await;
+        if result.is_err() {
+            *guard = None;
+        }
+        result
+    }
+
+    /// Когда сделать первый автобэкап этого запуска: по расписанию от прошлой
+    /// автоматической копии, но не раньше чем через 10 минут после запуска.
+    fn first_auto_backup(&self, id: &str) -> Instant {
+        let store = self.store();
+        let every = store
+            .load(id)
+            .map(|m| Duration::from_secs(u64::from(m.auto_backup.every_minutes) * 60))
+            .unwrap_or(FIRST_AUTO_BACKUP);
+        let wait = match backups::last_auto(&store.backups_dir(id)) {
+            Some(at) => every.saturating_sub((chrono::Utc::now() - at).to_std().unwrap_or_default()),
+            None => Duration::ZERO,
+        };
+        Instant::now() + wait.max(FIRST_AUTO_BACKUP)
+    }
+
+    /// Автобэкап в фоне: ход и итог видны в консоли сервера.
+    fn spawn_auto_backup(self: &Arc<Self>, id: &str) {
+        let this = self.clone();
+        let id = id.to_string();
+        tokio::spawn(async move {
+            match this.backup(&id, BackupKind::Auto).await {
+                Ok(Some(info)) => this.push_line(
+                    &id,
+                    ConsoleStream::System,
+                    format!("Автобэкап мира готов ({} МБ)", info.size_bytes.div_ceil(1024 * 1024)),
+                ),
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!("Автобэкап сервера {id} не удался: {e}");
+                    this.push_line(&id, ConsoleStream::System, format!("Автобэкап не удался: {e}"));
+                }
+            }
+        });
+    }
+
     /// Раз в несколько секунд: память и процессор процесса, игроки онлайн, TPS.
     fn spawn_stats(self: &Arc<Self>, id: &str, running: Arc<RunningServer>) {
         let this = self.clone();
@@ -1023,6 +1318,11 @@ impl ServerManager {
             let mut sys = sysinfo::System::new().ok();
             let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) as f32;
             let mut tps_supported = true;
+            // Автовыключение: с какого момента на сервере никого нет.
+            let mut empty_since: Option<Instant> = None;
+            // Автобэкап: когда пора и играл ли кто-нибудь с прошлой копии.
+            let mut next_backup = this.first_auto_backup(&id);
+            let mut played = false;
             loop {
                 tokio::select! {
                     _ = tokio::time::sleep(STATS_EVERY) => {}
@@ -1049,12 +1349,14 @@ impl ServerManager {
                     }
                 }
                 // Игроки и TPS доступны только когда сервер уже полностью запустился.
+                let mut online_known = false;
                 if this.status(&id) == ServerStatus::Running {
                     let prefix = players::command_prefix(running.is_paper);
                     if let Ok(reply) = Self::rcon_command(&running, &format!("{prefix}list")).await {
                         if let Some((online, max)) = players::parse_list(&reply) {
                             stats.online = online;
                             stats.max_players = Some(max);
+                            online_known = true;
                         }
                     }
                     if tps_supported {
@@ -1073,6 +1375,45 @@ impl ServerManager {
                 }
                 if this.running(&id).is_none() {
                     break;
+                }
+                if online_known && !running.stop_requested.load(Ordering::SeqCst) {
+                    if stats.online.is_empty() {
+                        let since = *empty_since.get_or_insert_with(Instant::now);
+                        let minutes = running.auto_stop_minutes.load(Ordering::SeqCst);
+                        let minute = Duration::from_millis(this.minute_ms.load(Ordering::Relaxed));
+                        if minutes > 0 && since.elapsed() >= minute * minutes {
+                            empty_since = None;
+                            this.push_line(
+                                &id,
+                                ConsoleStream::System,
+                                format!(
+                                    "На сервере никого нет {}: выключаю, чтобы не тратить ресурсы компьютера. Это можно поменять в настройках сервера.",
+                                    minutes_text(minutes)
+                                ),
+                            );
+                            let this = this.clone();
+                            let id = id.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = this.stop(&id, STOP_TIMEOUT).await {
+                                    tracing::warn!("Автовыключение сервера {id}: {e}");
+                                }
+                            });
+                        }
+                    } else {
+                        empty_since = None;
+                        played = true;
+                    }
+                    if played && Instant::now() >= next_backup && !this.backup_in_progress(&id) {
+                        let auto = this.store().load(&id).map(|m| m.auto_backup).unwrap_or_default();
+                        if auto.enabled {
+                            played = false;
+                            next_backup = Instant::now() + Duration::from_secs(u64::from(auto.every_minutes) * 60);
+                            this.spawn_auto_backup(&id);
+                        } else {
+                            // Автобэкап выключен: проверим настройку ещё раз через минуту.
+                            next_backup = Instant::now() + Duration::from_secs(60);
+                        }
+                    }
                 }
                 this.lock().stats.insert(id.clone(), stats.clone());
                 this.sink.emit(Event::Stats(StatsEvent {

@@ -8,6 +8,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import type { AppConfig } from "../bindings/AppConfig";
+import type { BackupInfo } from "../bindings/BackupInfo";
+import type { SavedWorld } from "../bindings/SavedWorld";
 import type { ConsoleLine } from "../bindings/ConsoleLine";
 import type { CreateServerRequest } from "../bindings/CreateServerRequest";
 import type { DirectAttempt } from "../bindings/DirectAttempt";
@@ -90,6 +92,25 @@ export interface HearthApi {
   playerAction(id: string, action: PlayerAction, name: string, reason: string | null): Promise<string>;
   disableFriendAccess(id: string): Promise<ServerMeta>;
 
+  // Миры и резервные копии
+  listBackups(id: string): Promise<BackupInfo[]>;
+  backupInProgress(id: string): Promise<boolean>;
+  /** Копия мира сейчас (и на работающем сервере). `null`, если мира ещё нет. */
+  createBackup(id: string): Promise<BackupInfo | null>;
+  deleteBackup(id: string, file: string): Promise<void>;
+  /** Сервер должен быть остановлен. Возвращает страховочную копию прежнего мира. */
+  restoreBackup(id: string, file: string): Promise<BackupInfo | null>;
+  exportBackup(id: string, file: string, dest: string): Promise<void>;
+  exportWorld(id: string, dest: string): Promise<void>;
+  listSavedWorlds(): Promise<SavedWorld[]>;
+  /** Папка мира или zip. Сервер должен быть остановлен. */
+  importWorld(id: string, source: string): Promise<BackupInfo | null>;
+  openBackupsFolder(id: string): Promise<void>;
+  /** Системные окна выбора файла. `null`, если пользователь передумал. */
+  pickZip(): Promise<string | null>;
+  pickFolder(): Promise<string | null>;
+  pickSaveZip(defaultName: string): Promise<string | null>;
+
   onEvent(handler: (event: Event) => void): Promise<() => void>;
   /** Есть ли новая версия Hearth. `null`, если установлена последняя. */
   checkUpdate(): Promise<AvailableUpdate | null>;
@@ -169,6 +190,31 @@ const tauriApi: HearthApi = {
   getPlayers: (id) => invoke("get_players", { id }),
   playerAction: (id, action, name, reason) => invoke("player_action", { id, action, name, reason }),
   disableFriendAccess: (id) => invoke("disable_friend_access", { id }),
+
+  listBackups: (id) => invoke("list_backups", { id }),
+  backupInProgress: (id) => invoke("backup_in_progress", { id }),
+  createBackup: (id) => invoke("create_backup", { id }),
+  deleteBackup: (id, file) => invoke("delete_backup", { id, file }),
+  restoreBackup: (id, file) => invoke("restore_backup", { id, file }),
+  exportBackup: (id, file, dest) => invoke("export_backup", { id, file, dest }),
+  exportWorld: (id, dest) => invoke("export_world", { id, dest }),
+  listSavedWorlds: () => invoke("list_saved_worlds"),
+  importWorld: (id, source) => invoke("import_world", { id, source }),
+  openBackupsFolder: (id) => invoke("open_backups_folder", { id }),
+  pickZip: async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const path = await open({ multiple: false, filters: [{ name: "Zip-архив", extensions: ["zip"] }] });
+    return typeof path === "string" ? path : null;
+  },
+  pickFolder: async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const path = await open({ directory: true, multiple: false });
+    return typeof path === "string" ? path : null;
+  },
+  pickSaveZip: async (defaultName) => {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    return save({ defaultPath: defaultName, filters: [{ name: "Zip-архив", extensions: ["zip"] }] });
+  },
 
   onEvent: (handler) => listen<Event>("hearth://event", (e) => handler(e.payload)),
   checkUpdate: tauriCheckUpdate,

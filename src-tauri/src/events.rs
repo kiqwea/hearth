@@ -33,6 +33,17 @@ pub enum Event {
     Direct(crate::direct::DirectEvent),
     /// Свежая статистика работающего сервера: память, процессор, TPS, игроки.
     Stats(crate::players::StatsEvent),
+    /// Началось или закончилось копирование мира; список копий мог измениться.
+    Backups(BackupsEvent),
+}
+
+#[derive(Serialize, Clone, Debug, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct BackupsEvent {
+    pub server_id: String,
+    /// Копия делается прямо сейчас.
+    pub in_progress: bool,
 }
 
 #[derive(Serialize, Clone, Debug, TS)]

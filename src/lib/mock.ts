@@ -1,6 +1,8 @@
 // Имитация ядра для просмотра интерфейса в обычном браузере (`npm run dev`).
 // В приложении не используется: там работает настоящий Rust.
 
+import type { BackupInfo } from "../bindings/BackupInfo";
+import type { BackupKind } from "../bindings/BackupKind";
 import type { ConsoleLine } from "../bindings/ConsoleLine";
 import type { ConsoleStream } from "../bindings/ConsoleStream";
 import type { Event } from "../bindings/Event";
@@ -59,6 +61,8 @@ function meta(partial: Partial<ServerMeta> & Pick<ServerMeta, "id" | "name" | "l
     authPlugin: null,
     authLangSet: false,
     nickProtection: false,
+    autoBackup: { enabled: true, everyMinutes: 60, keep: 10 },
+    autoStopMinutes: 0,
     ...partial,
   };
 }
@@ -96,6 +100,24 @@ export function createMockApi(): HearthApi {
   const setStatus = (id: string, status: ServerStatus) => {
     servers.get(id)!.status = status;
     emit({ type: "status", data: { serverId: id, status } });
+  };
+  const mockBackup = (at: Date, kind: BackupKind, mb: number): BackupInfo => {
+    const p = (n: number) => String(n).padStart(2, "0");
+    const stamp = `${at.getFullYear()}-${p(at.getMonth() + 1)}-${p(at.getDate())}_${p(at.getHours())}-${p(at.getMinutes())}-${p(at.getSeconds())}`;
+    return { file: `${stamp}_${kind}.zip`, kind, createdAt: at.toISOString(), sizeBytes: mb * 1024 * 1024 };
+  };
+  const backups = new Map<string, BackupInfo[]>();
+  const backupsOf = (id: string) => {
+    if (!backups.has(id)) {
+      const h = (n: number) => new Date(Date.now() - n * 3_600_000);
+      backups.set(
+        id,
+        id.startsWith("survival")
+          ? [mockBackup(h(0.5), "auto", 408), mockBackup(h(1.5), "auto", 405), mockBackup(h(26), "manual", 380), mockBackup(h(30), "pirate", 377)]
+          : [],
+      );
+    }
+    return backups.get(id)!;
   };
   const progress = (id: string, p: InstallProgress) => emit({ type: "install", data: { serverId: id, progress: p } });
 
@@ -298,6 +320,8 @@ export function createMockApi(): HearthApi {
       const s = servers.get(id)!;
       if (patch.name) s.meta.name = patch.name;
       if (patch.memoryMb) s.meta.memoryMb = patch.memoryMb;
+      if (patch.autoBackup) s.meta.autoBackup = patch.autoBackup;
+      if (patch.autoStopMinutes !== undefined) s.meta.autoStopMinutes = patch.autoStopMinutes;
       return { ...s.meta };
     },
     deleteServer: async (id, deleteTunnel) => {
@@ -477,6 +501,50 @@ export function createMockApi(): HearthApi {
       emitPlayit();
       return { ...s.meta };
     },
+    listBackups: async (id) => structuredClone(backupsOf(id)),
+    backupInProgress: async () => false,
+    createBackup: async (id) => {
+      emit({ type: "backups", data: { serverId: id, inProgress: true } });
+      await wait(1500);
+      const info = mockBackup(new Date(), "manual", 412);
+      backupsOf(id).unshift(info);
+      emit({ type: "backups", data: { serverId: id, inProgress: false } });
+      return info;
+    },
+    deleteBackup: async (id, file) => {
+      backups.set(id, backupsOf(id).filter((b) => b.file !== file));
+    },
+    restoreBackup: async (id) => {
+      await wait(1500);
+      const info = mockBackup(new Date(), "beforeRestore", 415);
+      backupsOf(id).unshift(info);
+      return info;
+    },
+    exportBackup: async () => {
+      await wait(500);
+    },
+    exportWorld: async () => {
+      await wait(1500);
+    },
+    listSavedWorlds: async () => {
+      await wait(700);
+      const ago = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+      return [
+        { name: "Новый мир", path: "C:\\Users\\Дима\\AppData\\Roaming\\.minecraft\\saves\\Новый мир", source: "Minecraft", lastPlayed: ago(3), sizeBytes: 186_000_000 },
+        { name: "Хардкор", path: "C:\\Users\\Дима\\AppData\\Roaming\\.minecraft\\saves\\Хардкор", source: "Minecraft", lastPlayed: ago(50), sizeBytes: 42_000_000 },
+        { name: "Create", path: "C:\\Users\\Дима\\AppData\\Roaming\\PrismLauncher\\instances\\Create\\minecraft\\saves\\Create", source: "Prism Launcher: Create", lastPlayed: ago(400), sizeBytes: 905_000_000 },
+      ];
+    },
+    importWorld: async (id) => {
+      await wait(2000);
+      const info = mockBackup(new Date(), "beforeImport", 410);
+      backupsOf(id).unshift(info);
+      return info;
+    },
+    openBackupsFolder: async () => {},
+    pickZip: async () => "C:\\Users\\Дима\\Downloads\\SkyBlock.zip",
+    pickFolder: async () => null,
+    pickSaveZip: async (name) => `C:\\Users\\Дима\\Downloads\\${name}`,
     stopAll: async () => {
       for (const [id, s] of servers) {
         if (s.status.state === "running" || s.status.state === "starting") {

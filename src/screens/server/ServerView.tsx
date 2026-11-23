@@ -7,6 +7,7 @@ import { t } from "../../i18n";
 import { api, isHearthError } from "../../lib/api";
 import { formatGb, formatUptime, serverTitle, statusText, statusTone } from "../../lib/format";
 import { useHearth, type ServerTab } from "../../lib/store";
+import { BackupsTab } from "./BackupsTab";
 import { ConsoleTab } from "./ConsoleTab";
 import { Overview } from "./Overview";
 import { PlayersTab } from "./PlayersTab";
@@ -29,9 +30,9 @@ export function ServerView({ id, tab }: { id: string; tab: ServerTab }) {
     { key: "overview", label: t.tabs.overview },
     { key: "console", label: t.tabs.console },
     { key: "players", label: t.tabs.players },
+    { key: "backups", label: t.tabs.backups },
     { key: "settings", label: t.tabs.settings },
     ...(extensions ? [{ key: null, label: extensions }] : []),
-    { key: null, label: t.tabs.backups },
   ];
 
   return (
@@ -64,6 +65,7 @@ export function ServerView({ id, tab }: { id: string; tab: ServerTab }) {
       {tab === "overview" && <Overview server={server} />}
       {tab === "console" && <ConsoleTab id={id} />}
       {tab === "players" && <PlayersTab server={server} />}
+      {tab === "backups" && <BackupsTab server={server} />}
       {tab === "settings" && <SettingsTab server={server} />}
     </div>
   );

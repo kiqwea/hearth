@@ -122,6 +122,48 @@ pub struct ServerMeta {
     /// (`auth_plugin` пуст), Hearth поставит его при установке сервера.
     #[serde(default)]
     pub nick_protection: bool,
+    /// Резервные копии мира по расписанию.
+    #[serde(default)]
+    pub auto_backup: AutoBackup,
+    /// Выключать сервер, если на нём никого нет столько минут. 0 — не выключать.
+    #[serde(default)]
+    pub auto_stop_minutes: u32,
+}
+
+/// Автобэкап: пока сервер работает и на нём кто-то играл, раз в `every_minutes`
+/// Hearth делает копию мира и хранит `keep` последних автоматических копий.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct AutoBackup {
+    pub enabled: bool,
+    pub every_minutes: u32,
+    pub keep: u32,
+}
+
+impl Default for AutoBackup {
+    fn default() -> Self {
+        Self { enabled: true, every_minutes: 60, keep: 10 }
+    }
+}
+
+impl AutoBackup {
+    pub fn validate(self) -> Result<Self> {
+        if !(15..=7 * 24 * 60).contains(&self.every_minutes) {
+            return Err(Error::invalid("Бэкап можно делать не чаще раза в 15 минут и не реже раза в неделю"));
+        }
+        if !(1..=100).contains(&self.keep) {
+            return Err(Error::invalid("Хранить можно от 1 до 100 копий"));
+        }
+        Ok(self)
+    }
+}
+
+pub fn validate_auto_stop(minutes: u32) -> Result<u32> {
+    if minutes != 0 && !(5..=24 * 60).contains(&minutes) {
+        return Err(Error::invalid("Автовыключение: от 5 минут до суток"));
+    }
+    Ok(minutes)
 }
 
 /// Туннель playit этого сервера. Создаётся один раз и не меняется между запусками.
@@ -164,8 +206,14 @@ pub struct CreateServerRequest {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ServerPatch {
+    #[ts(optional)]
     pub name: Option<String>,
+    #[ts(optional)]
     pub memory_mb: Option<u32>,
+    #[ts(optional)]
+    pub auto_backup: Option<AutoBackup>,
+    #[ts(optional)]
+    pub auto_stop_minutes: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, TS)]
@@ -243,6 +291,11 @@ impl ServerStore {
     /// Резервные копии мира: `servers/<id>/backups/`.
     pub fn backups_dir(&self, id: &str) -> PathBuf {
         self.server_root(id).join("backups")
+    }
+
+    /// Временная папка для распаковки мира при восстановлении и импорте.
+    pub fn staging_dir(&self, id: &str) -> PathBuf {
+        self.server_root(id).join("world-import.tmp")
     }
 
     pub fn server_root(&self, id: &str) -> PathBuf {
@@ -352,6 +405,8 @@ impl ServerStore {
             auth_lang_set: false,
             // Для Vanilla защиты ников не бывает.
             nick_protection: req.pirate_mode && req.nick_protection && req.loader != Loader::Vanilla,
+            auto_backup: AutoBackup::default(),
+            auto_stop_minutes: 0,
         };
 
         let game_dir = self.game_dir(&id);

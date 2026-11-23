@@ -11,6 +11,8 @@ import { useHearth } from "../../lib/store";
 import { PirateMode } from "./PirateMode";
 
 const fieldClass = "h-10 px-3 rounded-[9px] border border-line-strong bg-bg text-ink placeholder:text-faint";
+/** Автовыключение пустого сервера, минуты (0 — никогда). */
+const AUTO_STOP = [0, 10, 15, 30, 60, 120];
 
 export function SettingsTab({ server }: { server: ServerSummary }) {
   const { meta, status } = server;
@@ -24,6 +26,7 @@ export function SettingsTab({ server }: { server: ServerSummary }) {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [name, setName] = useState(meta.name);
   const [memoryMb, setMemoryMb] = useState(meta.memoryMb);
+  const [autoStop, setAutoStop] = useState(meta.autoStopMinutes);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteTunnel, setDeleteTunnel] = useState(true);
@@ -62,8 +65,12 @@ export function SettingsTab({ server }: { server: ServerSummary }) {
   const changedKeys = original
     ? Object.keys(draft).filter((k) => draft[k] !== (original[k] ?? PROPERTY_GROUPS.flatMap((g) => g.items).find((i) => i.key === k)?.default))
     : [];
-  const metaChanged = name.trim() !== meta.name || memoryMb !== meta.memoryMb;
-  const changes = changedKeys.length + (name.trim() !== meta.name ? 1 : 0) + (memoryMb !== meta.memoryMb ? 1 : 0);
+  const metaChanged = name.trim() !== meta.name || memoryMb !== meta.memoryMb || autoStop !== meta.autoStopMinutes;
+  const changes =
+    changedKeys.length +
+    (name.trim() !== meta.name ? 1 : 0) +
+    (memoryMb !== meta.memoryMb ? 1 : 0) +
+    (autoStop !== meta.autoStopMinutes ? 1 : 0);
 
   async function save() {
     setSaving(true);
@@ -71,8 +78,9 @@ export function SettingsTab({ server }: { server: ServerSummary }) {
       if (changedKeys.length) await api.setProperties(meta.id, changedKeys.map((key) => ({ key, value: draft[key] })));
       if (metaChanged) {
         await api.updateServer(meta.id, {
-          name: name.trim() !== meta.name ? name.trim() : null,
-          memoryMb: memoryMb !== meta.memoryMb ? memoryMb : null,
+          name: name.trim() !== meta.name ? name.trim() : undefined,
+          memoryMb: memoryMb !== meta.memoryMb ? memoryMb : undefined,
+          autoStopMinutes: autoStop !== meta.autoStopMinutes ? autoStop : undefined,
         });
       }
       await Promise.all([refreshServers(), load()]);
@@ -88,6 +96,7 @@ export function SettingsTab({ server }: { server: ServerSummary }) {
     if (original) setDraft(original);
     setName(meta.name);
     setMemoryMb(meta.memoryMb);
+    setAutoStop(meta.autoStopMinutes);
   }
 
   async function remove() {
@@ -146,6 +155,20 @@ export function SettingsTab({ server }: { server: ServerSummary }) {
             onChange={(e) => setMemoryMb(Number(e.target.value) * 1024)}
             className="flex-[1_1_260px]"
           />
+        </Row>
+        <Row label={t.settings.autoStop} hint={t.settings.autoStopHint} htmlFor="set-autostop">
+          <select
+            id="set-autostop"
+            value={autoStop}
+            onChange={(e) => setAutoStop(Number(e.target.value))}
+            className={`${fieldClass} w-[200px] max-w-full`}
+          >
+            {(AUTO_STOP.includes(autoStop) ? AUTO_STOP : [...AUTO_STOP, autoStop].sort((a, b) => a - b)).map((m) => (
+              <option key={m} value={m}>
+                {m === 0 ? t.settings.autoStopNever : t.settings.minutes(m)}
+              </option>
+            ))}
+          </select>
         </Row>
       </Group>
 

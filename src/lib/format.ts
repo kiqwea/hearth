@@ -47,6 +47,27 @@ export function formatMb(bytes: number): string {
   return `${Math.round(bytes / 1_000_000)} МБ`;
 }
 
+/** Размер файла: «850 МБ», «1,4 ГБ». */
+export function formatSize(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  if (mb < 1) return bytes === 0 ? "0 МБ" : "меньше 1 МБ";
+  if (mb < 1024) return `${Math.round(mb)} МБ`;
+  return `${String(Math.round((mb / 1024) * 10) / 10).replace(".", ",")} ГБ`;
+}
+
+/** «сегодня в 18:05», «вчера в 09:30», «20 ноября в 14:00». */
+export function formatWhen(iso: string): string {
+  const d = new Date(iso);
+  const time = d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(new Date()) - day(d)) / 86_400_000);
+  if (diff === 0) return `сегодня в ${time}`;
+  if (diff === 1) return `вчера в ${time}`;
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  const date = d.toLocaleDateString("ru-RU", { day: "numeric", month: "long", ...(sameYear ? {} : { year: "numeric" }) });
+  return `${date} в ${time}`;
+}
+
 export function formatUptime(ms: number): string {
   const minutes = Math.floor(ms / 60_000);
   if (minutes < 1) return "меньше минуты";
