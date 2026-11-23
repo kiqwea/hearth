@@ -405,6 +405,25 @@ export function createMockApi(): HearthApi {
     openFolder: async () => {},
 
     getPlayers: async (id) => structuredClone(roster.get(id) ?? []),
+    statsHistory: async (id) => {
+      const s = servers.get(id)!;
+      if (s.status.state !== "running") return [];
+      // Час работы: живая куча медленно растёт, пока играют, и падает после сборок мусора.
+      const now = Date.now();
+      return Array.from({ length: 720 }, (_, i) => {
+        const minutes = (720 - i) / 12;
+        const wave = Math.sin(i / 40) * 0.08 + Math.sin(i / 7) * 0.03;
+        const used = Math.round(s.meta.memoryMb * (0.3 + wave + (i > 400 ? 0.12 : 0)));
+        return {
+          at: now - minutes * 60_000,
+          heapUsedMb: used,
+          heapPeakMb: i % 3 === 0 ? Math.round(used * 1.6) : null,
+          cpuPercent: 5 + Math.abs(Math.sin(i / 25)) * 18 + (i > 400 ? 10 : 0),
+          tps: i > 600 && i < 615 ? 16.5 + Math.random() : 19.7 + Math.random() * 0.3,
+          online: i < 300 ? 0 : i < 400 ? 1 : i < 620 ? 3 : 2,
+        };
+      });
+    },
     playerAction: async (id, action, name, reason) => {
       if (servers.get(id)!.status.state !== "running") {
         throw { kind: "invalidInput", message: "Запустите сервер, чтобы управлять игроками" };

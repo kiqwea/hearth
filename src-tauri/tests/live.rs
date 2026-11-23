@@ -788,3 +788,51 @@ async fn live_neoforge() {
 async fn live_forge() {
     run_forge_like(Loader::Forge).await;
 }
+
+/// Реальная память JVM из GC-лога и история замеров для графиков.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_heap_monitoring() {
+    let shared = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("hearth-live");
+    let servers = tempfile::tempdir().unwrap();
+    let paths = Paths::new(shared.join("config"), shared.join("data"));
+    let http = Http::new(paths.cache_dir()).unwrap();
+    let manager = test_manager(&paths, &http, servers.path(), Arc::new(PrintSink::default()));
+    let version = providers::list_versions(&http, Loader::Paper, false).await.unwrap()[0].id.clone();
+    let id = manager
+        .create(CreateServerRequest {
+            name: "Память".into(),
+            loader: Loader::Paper,
+            game_version: version,
+            memory_mb: 2048,
+            port: Some(free_port()),
+            game_mode: GameMode::Creative,
+            difficulty: Difficulty::Peaceful,
+            max_players: 3,
+            seed: Some("hearth".into()),
+            eula_accepted: true,
+            pirate_mode: false,
+            nick_protection: false,
+        })
+        .await
+        .unwrap()
+        .id;
+    manager.start(&id).await.unwrap();
+    wait_running(&manager, &id).await;
+    let started = Instant::now();
+    let stats = loop {
+        let s = manager.get(&id).unwrap().stats;
+        if let Some(s) = s.filter(|s| s.heap_used_mb.is_some()) {
+            break s;
+        }
+        assert!(started.elapsed() < Duration::from_secs(60), "куча из GC-лога не появилась");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    };
+    let history = manager.stats_history(&id);
+    println!("== процесс {:?} МБ, куча {:?} МБ, пик {:?}, замеров {}", stats.memory_mb, stats.heap_used_mb, stats.heap_peak_mb, history.len());
+    let heap = stats.heap_used_mb.unwrap();
+    assert!(heap > 10 && heap < 2048, "куча в разумных пределах: {heap}");
+    assert!(!history.is_empty());
+    manager.stop(&id, STOP_TIMEOUT).await.unwrap();
+    assert!(!manager.stats_history(&id).is_empty(), "история остаётся после остановки");
+}

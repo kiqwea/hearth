@@ -42,8 +42,9 @@ export function Overview({ server }: { server: ServerSummary }) {
     },
     {
       label: t.overview.memory,
-      value: stats?.memoryMb != null ? formatGb(stats.memoryMb) : formatGb(meta.memoryMb),
-      sub: stats?.memoryMb != null ? t.overview.memoryUsed(formatGb(meta.memoryMb)) : t.overview.memoryAllocated,
+      // Реальная занятость миром (из GC-лога): процесс Java всегда держит всю выделенную память.
+      value: stats?.heapUsedMb != null ? formatGb(stats.heapUsedMb) : formatGb(meta.memoryMb),
+      sub: stats?.heapUsedMb != null ? t.overview.memoryUsed(formatGb(meta.memoryMb)) : t.overview.memoryAllocated,
     },
     {
       label: t.overview.uptime,

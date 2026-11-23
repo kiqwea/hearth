@@ -20,6 +20,7 @@ import type { UpdateInfo } from "../bindings/UpdateInfo";
 import type { UpdatePlan } from "../bindings/UpdatePlan";
 import type { UpdateResult } from "../bindings/UpdateResult";
 import type { SavedWorld } from "../bindings/SavedWorld";
+import type { StatsSample } from "../bindings/StatsSample";
 import type { ConsoleLine } from "../bindings/ConsoleLine";
 import type { CreateServerRequest } from "../bindings/CreateServerRequest";
 import type { DirectAttempt } from "../bindings/DirectAttempt";
@@ -98,6 +99,8 @@ export interface HearthApi {
 
   // Игроки
   getPlayers(id: string): Promise<PlayerInfo[]>;
+  /** Замеры для графиков за последний час работы. */
+  statsHistory(id: string): Promise<StatsSample[]>;
   /** Кик, бан, оператор, белый список. Возвращает ответ сервера. */
   playerAction(id: string, action: PlayerAction, name: string, reason: string | null): Promise<string>;
   disableFriendAccess(id: string): Promise<ServerMeta>;
@@ -225,6 +228,7 @@ const tauriApi: HearthApi = {
   setPirateMode: (id, enable, protect) => invoke("set_pirate_mode", { id, enable, protect }),
   setNickProtection: (id, on) => invoke("set_nick_protection", { id, on }),
   getPlayers: (id) => invoke("get_players", { id }),
+  statsHistory: (id) => invoke("stats_history", { id }),
   playerAction: (id, action, name, reason) => invoke("player_action", { id, action, name, reason }),
   disableFriendAccess: (id) => invoke("disable_friend_access", { id }),
 

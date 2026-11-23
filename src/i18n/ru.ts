@@ -60,7 +60,7 @@ export const ru = {
   tabs: {
     overview: "Обзор",
     console: "Консоль",
-    players: "Игроки",
+    players: "Мониторинг",
     settings: "Настройки",
     plugins: "Плагины",
     mods: "Моды",
@@ -312,6 +312,29 @@ export const ru = {
           ? `${Math.round(n / 1000)} тыс. загрузок`
           : `${n} ${plural(n, "загрузка", "загрузки", "загрузок")}`,
     by: (author: string) => `от ${author}`,
+  },
+
+  monitor: {
+    memory: "Память",
+    memoryNow: (used: string, total: string) => `${used} из ${total}`,
+    memoryHint:
+      "Сколько памяти миру нужно на самом деле (после очистки памяти Java). Короткие всплески между очистками — это нормально.",
+    allocated: (gb: string) => `Выделено ${gb}`,
+    peak: (gb: string) => `пик перед очисткой ${gb}`,
+    verdictOk: "Памяти хватает",
+    verdictMore: (gb: string) => `Памяти мало: стоит увеличить до ${gb} в настройках сервера`,
+    verdictLess: (gb: string) => `Памяти с запасом: можно уменьшить до ${gb} и отдать остальное игре`,
+    verdictWait: "Оценка появится, когда сервер поработает пару минут",
+    waitingGc: "Данные появятся в первую минуту работы сервера",
+    stopped: "Графики появятся, когда сервер запустится",
+    cpu: "Процессор",
+    tps: "TPS",
+    tpsNorm: "норма 20",
+    players: "Игроки онлайн",
+    window: "Период",
+    minutes: (m: number) => (m >= 60 ? `${m / 60} ч` : `${m} мин`),
+    ago: (m: number) => (m >= 60 ? `${m / 60} ч назад` : `${String(m).replace(".", ",")} мин назад`),
+    now: "сейчас",
   },
 
   pack: {

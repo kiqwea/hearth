@@ -11,6 +11,7 @@ import type { NetworkInfo } from "../bindings/NetworkInfo";
 import type { PlayitStatus } from "../bindings/PlayitStatus";
 import type { ServerStatus } from "../bindings/ServerStatus";
 import type { ServerSummary } from "../bindings/ServerSummary";
+import type { StatsSample } from "../bindings/StatsSample";
 import type { SystemInfo } from "../bindings/SystemInfo";
 import { t } from "../i18n";
 import { api, errorMessage, openExternal, type AvailableUpdate } from "./api";
@@ -19,6 +20,8 @@ import { api, errorMessage, openExternal, type AvailableUpdate } from "./api";
 const CONSOLE_LIMIT = 5000;
 /** Как часто проверять обновления Hearth, пока приложение открыто. */
 const UPDATE_CHECK_INTERVAL = 6 * 60 * 60 * 1000;
+/** Час замеров раз в 5 секунд, как в ядре. */
+const HISTORY_LIMIT = 720;
 
 export type ServerTab = "overview" | "console" | "players" | "settings" | "backups" | "mods";
 
@@ -63,6 +66,9 @@ interface HearthState {
   backupBusy: Record<string, boolean>;
   /** Растёт, когда список копий мог измениться: вкладка «Бэкапы» перечитывает его. */
   backupsRev: Record<string, number>;
+  /** Замеры для графиков «Мониторинга» (загружаются при открытии вкладки). */
+  history: Record<string, StatsSample[]>;
+  loadHistory(id: string): Promise<void>;
 
   /**
    * «Включить доступ для друзей»: сначала напрямую (порт на роутере), если не
@@ -115,6 +121,16 @@ export const useHearth = create<HearthState>((set, get) => ({
   directReason: {},
   backupBusy: {},
   backupsRev: {},
+  history: {},
+
+  async loadHistory(id) {
+    try {
+      const samples = await api.statsHistory(id);
+      set((st) => ({ history: { ...st.history, [id]: samples } }));
+    } catch (e) {
+      console.warn("Не удалось загрузить историю статистики", e);
+    }
+  },
 
   async connectFriendAccess(id, options) {
     const meta = get().servers[id]?.meta;
@@ -342,7 +358,19 @@ function handleEvent(event: Event) {
       const { serverId, stats } = event.data;
       useHearth.setState((st) => {
         const existing = st.servers[serverId];
-        return existing ? { servers: { ...st.servers, [serverId]: { ...existing, stats } } } : {};
+        if (!existing) return {};
+        // Тот же замер, что ядро кладёт в историю: графики растут вживую.
+        const sample: StatsSample = {
+          at: Date.now(),
+          heapUsedMb: stats.heapUsedMb,
+          heapPeakMb: stats.heapPeakMb,
+          cpuPercent: stats.cpuPercent,
+          tps: stats.tps,
+          online: stats.online.length,
+        };
+        const prev = st.history[serverId];
+        const history = prev ? { ...st.history, [serverId]: [...prev, sample].slice(-HISTORY_LIMIT) } : st.history;
+        return { servers: { ...st.servers, [serverId]: { ...existing, stats } }, history };
       });
       break;
     }

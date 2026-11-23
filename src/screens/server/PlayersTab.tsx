@@ -12,6 +12,7 @@ import { t } from "../../i18n";
 import { api } from "../../lib/api";
 import { avatarColors, initial } from "../../lib/format";
 import { useHearth } from "../../lib/store";
+import { Monitoring } from "./Monitoring";
 
 const NICK = /^[A-Za-z0-9_]{1,16}$/;
 
@@ -64,6 +65,8 @@ export function PlayersTab({ server }: { server: ServerSummary }) {
 
   return (
     <div className="flex flex-col gap-[18px] max-w-[860px]">
+      <Monitoring server={server} />
+
       {!running && (
         <p className="m-0 px-4 py-3 rounded-xl bg-accent-soft text-accent-text">{t.players.stopped}</p>
       )}
