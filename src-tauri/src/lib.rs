@@ -2,6 +2,8 @@
 //!
 //! Ядро (всё, кроме `app`) не зависит от Tauri и тестируется отдельно.
 
+#[macro_use]
+pub mod lang;
 pub mod backups;
 pub mod config;
 pub mod direct;
