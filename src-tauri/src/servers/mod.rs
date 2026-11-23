@@ -128,6 +128,9 @@ pub struct ServerMeta {
     /// Выключать сервер, если на нём никого нет столько минут. 0 — не выключать.
     #[serde(default)]
     pub auto_stop_minutes: u32,
+    /// Запускать этот сервер, когда запускается Hearth (удобно вместе с автозапуском Hearth).
+    #[serde(default)]
+    pub start_with_app: bool,
 }
 
 /// Автобэкап: пока сервер работает и на нём кто-то играл, раз в `every_minutes`
@@ -214,6 +217,8 @@ pub struct ServerPatch {
     pub auto_backup: Option<AutoBackup>,
     #[ts(optional)]
     pub auto_stop_minutes: Option<u32>,
+    #[ts(optional)]
+    pub start_with_app: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, TS)]
@@ -407,6 +412,7 @@ impl ServerStore {
             nick_protection: req.pirate_mode && req.nick_protection && crate::pirate::auth_plugin_for(req.loader).is_some(),
             auto_backup: AutoBackup::default(),
             auto_stop_minutes: 0,
+            start_with_app: false,
         };
 
         let game_dir = self.game_dir(&id);

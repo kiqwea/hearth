@@ -4,4 +4,4 @@ import type { AutoBackup } from "./AutoBackup";
 /**
  * Изменение метаданных из настроек сервера. `None` = не менять.
  */
-export type ServerPatch = { name?: string, memoryMb?: number, autoBackup?: AutoBackup, autoStopMinutes?: number, };
+export type ServerPatch = { name?: string, memoryMb?: number, autoBackup?: AutoBackup, autoStopMinutes?: number, startWithApp?: boolean, };

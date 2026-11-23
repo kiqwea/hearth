@@ -65,6 +65,7 @@ function meta(partial: Partial<ServerMeta> & Pick<ServerMeta, "id" | "name" | "l
     nickProtection: false,
     autoBackup: { enabled: true, everyMinutes: 60, keep: 10 },
     autoStopMinutes: 0,
+    startWithApp: false,
     ...partial,
   };
 }
@@ -310,7 +311,7 @@ export function createMockApi(): HearthApi {
   return {
     systemInfo: async () => ({ totalMemoryMb: 16_384, recommendedMemoryMb: 4096, appVersion: "0.1.0-preview" }),
     networkInfo: async () => ({ lanIp: "192.168.1.5" }),
-    getConfig: async () => ({ serversDir: null, closeToTray: true, language: "ru" }),
+    getConfig: async () => ({ serversDir: null, closeToTray: true, language: "ru", notifications: true, autostart: false }),
     setConfig: async (c) => c,
     listVersions: async (_loader, unstable) => {
       await wait(400);
@@ -345,6 +346,7 @@ export function createMockApi(): HearthApi {
       if (patch.memoryMb) s.meta.memoryMb = patch.memoryMb;
       if (patch.autoBackup) s.meta.autoBackup = patch.autoBackup;
       if (patch.autoStopMinutes !== undefined) s.meta.autoStopMinutes = patch.autoStopMinutes;
+      if (patch.startWithApp !== undefined) s.meta.startWithApp = patch.startWithApp;
       return { ...s.meta };
     },
     deleteServer: async (id, deleteTunnel) => {

@@ -17,6 +17,8 @@ export function AppSettingsDialog() {
   const refreshServers = useHearth((s) => s.refreshServers);
 
   const [closeToTray, setCloseToTray] = useState(true);
+  const [notifications, setNotifications] = useState(true);
+  const [autostart, setAutostart] = useState(false);
   const [serversDir, setServersDir] = useState("");
   const [java, setJava] = useState<InstalledJava[]>([]);
   const [saving, setSaving] = useState(false);
@@ -27,6 +29,8 @@ export function AppSettingsDialog() {
   useEffect(() => {
     if (!open || !config) return;
     setCloseToTray(config.closeToTray);
+    setNotifications(config.notifications);
+    setAutostart(config.autostart);
     setServersDir(config.serversDir ?? "");
     api.listJava().then(setJava, () => setJava([]));
   }, [open, config]);
@@ -35,7 +39,7 @@ export function AppSettingsDialog() {
     if (!config) return;
     setSaving(true);
     try {
-      const next = await api.setConfig({ ...config, closeToTray, serversDir: serversDir.trim() || null });
+      const next = await api.setConfig({ ...config, closeToTray, notifications, autostart, serversDir: serversDir.trim() || null });
       setConfig(next);
       if ((next.serversDir ?? "") !== (config.serversDir ?? "")) await refreshServers();
       toast("success", t.settings.saved);
@@ -71,6 +75,9 @@ export function AppSettingsDialog() {
         </span>
         <Switch checked={closeToTray} onChange={setCloseToTray} label={t.appSettings.closeToTray} />
       </div>
+
+      <ToggleRow label={t.appSettings.notifications} hint={t.appSettings.notificationsHint} checked={notifications} onChange={setNotifications} />
+      <ToggleRow label={t.appSettings.autostart} hint={t.appSettings.autostartHint} checked={autostart} onChange={setAutostart} />
 
       <div className="flex flex-col gap-2 pt-2">
         <label htmlFor="app-servers-dir" className="font-semibold text-ink">
@@ -126,6 +133,18 @@ export function AppSettingsDialog() {
         <span>{t.appSettings.disclaimer}</span>
       </div>
     </Dialog>
+  );
+}
+
+function ToggleRow({ label, hint, checked, onChange }: { label: string; hint: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="flex-1 flex flex-col gap-0.5">
+        <span className="font-semibold text-ink">{label}</span>
+        <span className="text-[13px] text-muted">{hint}</span>
+      </span>
+      <Switch checked={checked} onChange={onChange} label={label} />
+    </div>
   );
 }
 

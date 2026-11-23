@@ -1,6 +1,7 @@
 //! Обвязка Tauri: состояние приложения, окно, трей, логи.
 
 mod commands;
+mod notify;
 mod tray;
 
 use std::path::Path;
@@ -33,6 +34,7 @@ struct TauriSink(AppHandle);
 
 impl EventSink for TauriSink {
     fn emit(&self, event: Event) {
+        notify::on_event(&self.0, &event);
         if let Err(e) = self.0.emit(EVENT_NAME, event) {
             tracing::debug!("Не удалось отправить событие в окно: {e}");
         }
@@ -53,18 +55,30 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![AUTOSTART_ARG]),
+        ))
         .setup(move |app| {
             let config = AppConfig::load(&paths.config_file());
             let http = Http::new(paths.cache_dir())?;
             let sink = Arc::new(TauriSink(app.handle().clone()));
             let manager = ServerManager::new(&paths, http, config.servers_dir(&paths), sink);
+            sync_autostart(app.handle(), config.autostart);
             app.manage(AppState {
-                manager,
+                manager: manager.clone(),
                 config: Mutex::new(config),
                 paths: paths.clone(),
                 quitting: AtomicBool::new(false),
             });
             tray::create(app.handle())?;
+            // Окно скрыто до этого места (tauri.conf.json): при автозапуске с
+            // Windows Hearth остаётся в трее, иначе показываем окно.
+            if !std::env::args().any(|a| a == AUTOSTART_ARG) {
+                show_main_window(app.handle());
+            }
+            start_marked_servers(manager);
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -92,6 +106,36 @@ pub fn run() {
                 // Выход с работающими серверами: сначала корректно их останавливаем.
                 api.prevent_exit();
                 request_quit(app);
+            }
+        }
+    });
+}
+
+/// Аргумент, с которым Windows запускает Hearth при входе в систему.
+const AUTOSTART_ARG: &str = "--autostart";
+
+/// Включает или убирает запись автозапуска Windows, чтобы она совпадала с настройкой.
+pub(crate) fn sync_autostart(app: &AppHandle, enabled: bool) {
+    use tauri_plugin_autostart::ManagerExt;
+    let launcher = app.autolaunch();
+    let current = launcher.is_enabled().unwrap_or(false);
+    let result = match (enabled, current) {
+        (true, false) => launcher.enable(),
+        (false, true) => launcher.disable(),
+        _ => Ok(()),
+    };
+    if let Err(e) = result {
+        tracing::warn!("Автозапуск Hearth: не удалось {}: {e}", if enabled { "включить" } else { "выключить" });
+    }
+}
+
+/// Серверы с отметкой «Запускать вместе с Hearth» запускаются по очереди.
+fn start_marked_servers(manager: Arc<ServerManager>) {
+    tauri::async_runtime::spawn(async move {
+        for meta in manager.store().list().into_iter().filter(|m| m.start_with_app) {
+            tracing::info!("Запускаю сервер {} вместе с Hearth", meta.id);
+            if let Err(e) = manager.start(&meta.id).await {
+                tracing::warn!("Сервер {} не запустился вместе с Hearth: {e}", meta.id);
             }
         }
     });

@@ -400,6 +400,9 @@ impl ServerManager {
         if let Some(auto) = patch.auto_backup {
             meta.auto_backup = auto.validate()?;
         }
+        if let Some(start) = patch.start_with_app {
+            meta.start_with_app = start;
+        }
         if let Some(minutes) = patch.auto_stop_minutes {
             meta.auto_stop_minutes = servers::validate_auto_stop(minutes)?;
         }

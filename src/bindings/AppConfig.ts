@@ -12,4 +12,13 @@ closeToTray: boolean,
 /**
  * Язык интерфейса.
  */
-language: string, };
+language: string, 
+/**
+ * Уведомления Windows (сервер запущен или упал, игрок зашёл, бэкап),
+ * когда окно Hearth свёрнуто или в трее.
+ */
+notifications: boolean, 
+/**
+ * Запускать Hearth вместе с Windows (сразу в трей).
+ */
+autostart: boolean, };

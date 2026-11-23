@@ -49,4 +49,8 @@ autoBackup: AutoBackup,
 /**
  * Выключать сервер, если на нём никого нет столько минут. 0 — не выключать.
  */
-autoStopMinutes: number, };
+autoStopMinutes: number, 
+/**
+ * Запускать этот сервер, когда запускается Hearth (удобно вместе с автозапуском Hearth).
+ */
+startWithApp: boolean, };

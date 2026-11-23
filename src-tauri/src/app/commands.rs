@@ -271,12 +271,15 @@ fn get_config(state: State<'_, AppState>) -> AppConfig {
 }
 
 #[tauri::command]
-async fn set_config(state: State<'_, AppState>, config: AppConfig) -> Result<AppConfig> {
+async fn set_config(app: tauri::AppHandle, state: State<'_, AppState>, config: AppConfig) -> Result<AppConfig> {
     let old = state.config.lock().map(|c| c.clone()).unwrap_or_default();
     if old.servers_dir != config.servers_dir {
         state
             .manager
             .set_servers_dir(config.servers_dir(&state.paths))?;
+    }
+    if old.autostart != config.autostart {
+        super::sync_autostart(&app, config.autostart);
     }
     config.save(&state.paths.config_file()).await?;
     if let Ok(mut current) = state.config.lock() {

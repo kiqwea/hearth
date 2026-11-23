@@ -28,6 +28,7 @@ export function SettingsTab({ server }: { server: ServerSummary }) {
   const [name, setName] = useState(meta.name);
   const [memoryMb, setMemoryMb] = useState(meta.memoryMb);
   const [autoStop, setAutoStop] = useState(meta.autoStopMinutes);
+  const [startWithApp, setStartWithApp] = useState(meta.startWithApp);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteTunnel, setDeleteTunnel] = useState(true);
@@ -66,12 +67,14 @@ export function SettingsTab({ server }: { server: ServerSummary }) {
   const changedKeys = original
     ? Object.keys(draft).filter((k) => draft[k] !== (original[k] ?? PROPERTY_GROUPS.flatMap((g) => g.items).find((i) => i.key === k)?.default))
     : [];
-  const metaChanged = name.trim() !== meta.name || memoryMb !== meta.memoryMb || autoStop !== meta.autoStopMinutes;
+  const metaChanged =
+    name.trim() !== meta.name || memoryMb !== meta.memoryMb || autoStop !== meta.autoStopMinutes || startWithApp !== meta.startWithApp;
   const changes =
     changedKeys.length +
     (name.trim() !== meta.name ? 1 : 0) +
     (memoryMb !== meta.memoryMb ? 1 : 0) +
-    (autoStop !== meta.autoStopMinutes ? 1 : 0);
+    (autoStop !== meta.autoStopMinutes ? 1 : 0) +
+    (startWithApp !== meta.startWithApp ? 1 : 0);
 
   async function save() {
     setSaving(true);
@@ -82,6 +85,7 @@ export function SettingsTab({ server }: { server: ServerSummary }) {
           name: name.trim() !== meta.name ? name.trim() : undefined,
           memoryMb: memoryMb !== meta.memoryMb ? memoryMb : undefined,
           autoStopMinutes: autoStop !== meta.autoStopMinutes ? autoStop : undefined,
+          startWithApp: startWithApp !== meta.startWithApp ? startWithApp : undefined,
         });
       }
       await Promise.all([refreshServers(), load()]);
@@ -98,6 +102,7 @@ export function SettingsTab({ server }: { server: ServerSummary }) {
     setName(meta.name);
     setMemoryMb(meta.memoryMb);
     setAutoStop(meta.autoStopMinutes);
+    setStartWithApp(meta.startWithApp);
   }
 
   async function remove() {
@@ -172,6 +177,9 @@ export function SettingsTab({ server }: { server: ServerSummary }) {
               </option>
             ))}
           </select>
+        </Row>
+        <Row label={t.settings.startWithApp} hint={t.settings.startWithAppHint}>
+          <Switch checked={startWithApp} onChange={setStartWithApp} label={t.settings.startWithApp} />
         </Row>
       </Group>
 

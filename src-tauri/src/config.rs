@@ -19,6 +19,11 @@ pub struct AppConfig {
     pub close_to_tray: bool,
     /// Язык интерфейса.
     pub language: String,
+    /// Уведомления Windows (сервер запущен или упал, игрок зашёл, бэкап),
+    /// когда окно Hearth свёрнуто или в трее.
+    pub notifications: bool,
+    /// Запускать Hearth вместе с Windows (сразу в трей).
+    pub autostart: bool,
 }
 
 impl Default for AppConfig {
@@ -27,6 +32,8 @@ impl Default for AppConfig {
             servers_dir: None,
             close_to_tray: true,
             language: "ru".into(),
+            notifications: true,
+            autostart: false,
         }
     }
 }
