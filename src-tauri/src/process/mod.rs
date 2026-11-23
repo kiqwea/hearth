@@ -135,6 +135,9 @@ pub fn build_args(meta: &ServerMeta, jar: &str) -> Vec<String> {
             "-Dstderr.encoding=UTF-8",
             "-Dsun.stdout.encoding=UTF-8",
             "-Dsun.stderr.encoding=UTF-8",
+            // Лог сборок мусора: по нему Hearth видит, сколько памяти миру
+            // реально нужно (график на вкладке «Мониторинг»).
+            "-Xlog:gc:file=hearth-gc.log:uptime",
         ]
         .map(String::from),
     );

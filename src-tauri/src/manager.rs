@@ -40,7 +40,7 @@ use crate::mods::{self, ModList, ModSearch};
 use crate::pirate;
 use crate::presets::{self, PregenStatus, PresetResult};
 use crate::upgrade::{ModCompat, ModCompatStatus, UpdateInfo, UpdatePlan, UpdateResult};
-use crate::players::{self, PlayerAction, PlayerInfo, ServerStats, StatsEvent};
+use crate::players::{self, PlayerAction, PlayerInfo, ServerStats, StatsEvent, StatsSample};
 use crate::rcon::{self, Rcon};
 use crate::tunnel::api::PlayitApi;
 use crate::tunnel::secret::SecretStore;
@@ -117,6 +117,41 @@ struct Inner {
     consoles: HashMap<String, ConsoleBuffer>,
     /// Последняя статистика запущенных серверов.
     stats: HashMap<String, ServerStats>,
+    /// Замеры для графиков: последний час работы (после остановки остаются до следующего запуска).
+    history: HashMap<String, std::collections::VecDeque<StatsSample>>,
+}
+
+/// Сколько замеров хранить для графиков: час при замере раз в 5 секунд.
+const HISTORY_LEN: usize = 720;
+
+/// Дочитывает GC-лог с прошлого места: (занятость после последней сборки,
+/// наибольшая занятость перед сборкой) за это время.
+fn read_gc_log(path: &std::path::Path, offset: &mut u64) -> (Option<u32>, Option<u32>) {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(path) else { return (None, None) };
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    if len < *offset {
+        *offset = 0; // файл пересоздан
+    }
+    if file.seek(SeekFrom::Start(*offset)).is_err() {
+        return (None, None);
+    }
+    let mut buf = String::new();
+    if file.read_to_string(&mut buf).is_err() {
+        return (None, None);
+    }
+    // Последняя строка может быть дописана не до конца: оставляем её на потом.
+    let complete = buf.rfind('\n').map_or(0, |i| i + 1);
+    *offset += complete as u64;
+    let mut used = None;
+    let mut peak: Option<u32> = None;
+    for line in buf[..complete].lines() {
+        if let Some((before, after, _)) = players::parse_gc_line(line) {
+            used = Some(after);
+            peak = Some(peak.map_or(before, |p| p.max(before)));
+        }
+    }
+    (used, peak)
 }
 
 /// Как часто обновлять статистику работающего сервера.
@@ -1775,6 +1810,10 @@ impl ServerManager {
             let mut sys = sysinfo::System::new().ok();
             let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) as f32;
             let mut tps_supported = true;
+            // GC-лог этого запуска: старые замеры графика больше не нужны.
+            let gc_log = this.store().game_dir(&id).join(players::GC_LOG);
+            let mut gc_offset = 0u64;
+            this.lock().history.remove(&id);
             // Автовыключение: с какого момента на сервере никого нет.
             let mut empty_since: Option<Instant> = None;
             // Автобэкап: когда пора и играл ли кто-нибудь с прошлой копии.
@@ -1793,6 +1832,11 @@ impl ServerManager {
                     break;
                 }
                 let mut stats = this.lock().stats.get(&id).cloned().unwrap_or_default();
+                let (heap_used, heap_peak) = read_gc_log(&gc_log, &mut gc_offset);
+                if heap_used.is_some() {
+                    stats.heap_used_mb = heap_used;
+                }
+                stats.heap_peak_mb = heap_peak;
                 if let (Some(sys), Some(pid)) = (sys.as_mut(), running.pid) {
                     let pid = sysinfo::Pid::from_u32(pid);
                     sys.refresh_processes_specifics(
@@ -1872,13 +1916,26 @@ impl ServerManager {
                         }
                     }
                 }
-                this.lock().stats.insert(id.clone(), stats.clone());
+                {
+                    let mut inner = this.lock();
+                    let history = inner.history.entry(id.clone()).or_default();
+                    history.push_back(StatsSample::from_stats(&stats));
+                    while history.len() > HISTORY_LEN {
+                        history.pop_front();
+                    }
+                    inner.stats.insert(id.clone(), stats.clone());
+                }
                 this.sink.emit(Event::Stats(StatsEvent {
                     server_id: id.clone(),
                     stats,
                 }));
             }
         });
+    }
+
+    /// Замеры для графиков (последний час).
+    pub fn stats_history(&self, id: &str) -> Vec<StatsSample> {
+        self.lock().history.get(id).map(|h| h.iter().cloned().collect()).unwrap_or_default()
     }
 
     /// Служебная команда запущенному серверу; ответ не попадает в консоль.

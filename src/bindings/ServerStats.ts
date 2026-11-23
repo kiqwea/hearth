@@ -12,4 +12,14 @@ cpuPercent: number | null,
 /**
  * Тиков в секунду: 20 — норма, меньше — сервер не успевает.
  */
-tps: number | null, online: Array<string>, maxPlayers: number | null, };
+tps: number | null, online: Array<string>, maxPlayers: number | null, 
+/**
+ * Сколько памяти миру реально нужно: куча Java после последней сборки
+ * мусора (из GC-лога). `memory_mb` для этого не годится: Java сразу
+ * занимает всю выделенную память (`-Xms = -Xmx`, `AlwaysPreTouch`).
+ */
+heapUsedMb: number | null, 
+/**
+ * Наибольшая занятость кучи перед сборкой мусора с прошлого замера.
+ */
+heapPeakMb: number | null, };

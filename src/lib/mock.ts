@@ -293,6 +293,8 @@ export function createMockApi(): HearthApi {
       tps: 19.6 + Math.random() * 0.4,
       online,
       maxPlayers: 10,
+      heapUsedMb: Math.round(s.meta.memoryMb * 0.35 + Math.random() * 300),
+      heapPeakMb: Math.round(s.meta.memoryMb * 0.6 + Math.random() * 500),
     };
   };
   setInterval(() => {

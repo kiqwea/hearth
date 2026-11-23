@@ -26,6 +26,12 @@ pub struct ServerStats {
     pub tps: Option<f32>,
     pub online: Vec<String>,
     pub max_players: Option<u32>,
+    /// Сколько памяти миру реально нужно: куча Java после последней сборки
+    /// мусора (из GC-лога). `memory_mb` для этого не годится: Java сразу
+    /// занимает всю выделенную память (`-Xms = -Xmx`, `AlwaysPreTouch`).
+    pub heap_used_mb: Option<u32>,
+    /// Наибольшая занятость кучи перед сборкой мусора с прошлого замера.
+    pub heap_peak_mb: Option<u32>,
 }
 
 #[derive(Serialize, Clone, Debug, TS)]
@@ -34,6 +40,69 @@ pub struct ServerStats {
 pub struct StatsEvent {
     pub server_id: String,
     pub stats: ServerStats,
+}
+
+/// Точка графика: замер статистики раз в несколько секунд.
+#[derive(Serialize, Clone, Debug, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct StatsSample {
+    /// Время замера, мс с 1970 года.
+    #[ts(type = "number")]
+    pub at: i64,
+    pub heap_used_mb: Option<u32>,
+    pub heap_peak_mb: Option<u32>,
+    pub cpu_percent: Option<f32>,
+    pub tps: Option<f32>,
+    pub online: u32,
+}
+
+impl StatsSample {
+    pub fn from_stats(stats: &ServerStats) -> Self {
+        Self {
+            at: chrono::Utc::now().timestamp_millis(),
+            heap_used_mb: stats.heap_used_mb,
+            heap_peak_mb: stats.heap_peak_mb,
+            cpu_percent: stats.cpu_percent,
+            tps: stats.tps,
+            online: stats.online.len() as u32,
+        }
+    }
+}
+
+/// Файл GC-лога в папке сервера (пересоздаётся при каждом запуске).
+pub const GC_LOG: &str = "hearth-gc.log";
+
+/// Строка GC-лога Java: `... Pause Young (Normal) (G1 Evacuation Pause) 1024M->512M(6144M) 3.4ms`
+/// → (занято до сборки, после, размер кучи) в МБ.
+pub fn parse_gc_line(line: &str) -> Option<(u32, u32, u32)> {
+    fn mb(num: &str, unit: char) -> Option<u32> {
+        let n: f64 = num.parse().ok()?;
+        Some(match unit {
+            'K' => n / 1024.0,
+            'M' => n,
+            'G' => n * 1024.0,
+            _ => return None,
+        } as u32)
+    }
+    // Ищем «число+единица -> число+единица (число+единица)».
+    let arrow = line.find("->")?;
+    let left = &line[..arrow];
+    let start = left.rfind(|c: char| !(c.is_ascii_digit() || c == '.' || "KMG".contains(c))).map_or(0, |i| i + 1);
+    let before = &left[start..];
+    let rest = &line[arrow + 2..];
+    let open = rest.find('(')?;
+    let close = rest[open..].find(')')? + open;
+    let after = &rest[..open];
+    let total = &rest[open + 1..close];
+    let split = |s: &str| -> Option<(String, char)> {
+        let unit = s.chars().last()?;
+        Some((s[..s.len() - unit.len_utf8()].to_string(), unit))
+    };
+    let (b, bu) = split(before)?;
+    let (a, au) = split(after)?;
+    let (t, tu) = split(total)?;
+    Some((mb(&b, bu)?, mb(&a, au)?, mb(&t, tu)?))
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, TS)]
@@ -204,6 +273,17 @@ pub fn read_players(game_dir: &Path, online: &[String]) -> Vec<PlayerInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gc_log_lines() {
+        assert_eq!(
+            parse_gc_line("[12.345s][info][gc] GC(5) Pause Young (Normal) (G1 Evacuation Pause) 1024M->512M(6144M) 3.456ms"),
+            Some((1024, 512, 6144))
+        );
+        assert_eq!(parse_gc_line("[1.0s][info][gc] GC(0) Pause Young (Concurrent Start) 20480K->10240K(4G) 1.2ms"), Some((20, 10, 4096)));
+        assert_eq!(parse_gc_line("[3.0s][info][gc] GC(2) Concurrent Mark Cycle 12.3ms"), None);
+        assert_eq!(parse_gc_line("[0.01s][info][gc] Using G1"), None);
+    }
 
     #[test]
     fn parses_list() {

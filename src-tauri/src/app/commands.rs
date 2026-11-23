@@ -59,6 +59,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         set_nick_protection,
         get_players,
         player_action,
+        stats_history,
         list_backups,
         backup_in_progress,
         create_backup,
@@ -506,4 +507,10 @@ async fn export_pack(
         .export_pack(&id, options, format, &dest)
         .await
         .inspect_err(|e| tracing::warn!("Сборка для друзей сервера {id}: {e}"))
+}
+
+/// Замеры для графиков на вкладке «Мониторинг» (последний час).
+#[tauri::command]
+fn stats_history(state: State<'_, AppState>, id: String) -> Vec<crate::players::StatsSample> {
+    state.manager.stats_history(&id)
 }
