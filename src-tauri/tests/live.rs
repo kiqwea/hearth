@@ -71,6 +71,7 @@ async fn run_pirate(loader: Loader, plugin_marker: &str) {
             eula_accepted: true,
             pirate_mode: false,
             nick_protection: false,
+            ely_skins: false,
         })
         .await
         .unwrap()
@@ -165,6 +166,7 @@ async fn live_pirate_from_wizard() {
             eula_accepted: true,
             pirate_mode: true,
             nick_protection: true,
+            ely_skins: false,
         })
         .await
         .unwrap()
@@ -223,6 +225,7 @@ async fn run_server(loader: Loader) {
             eula_accepted: true,
             pirate_mode: false,
             nick_protection: false,
+            ely_skins: false,
         })
         .await
         .unwrap();
@@ -310,6 +313,7 @@ async fn run_players(loader: Loader) {
             eula_accepted: true,
             pirate_mode: false,
             nick_protection: false,
+            ely_skins: false,
         })
         .await
         .unwrap()
@@ -412,6 +416,7 @@ async fn run_backups(loader: Loader) {
             eula_accepted: true,
             pirate_mode: false,
             nick_protection: false,
+            ely_skins: false,
         })
         .await
         .unwrap()
@@ -528,6 +533,7 @@ async fn run_mods(loader: Loader, project: &str, marker: &str) {
             eula_accepted: true,
             pirate_mode: false,
             nick_protection: false,
+            ely_skins: false,
         })
         .await
         .unwrap()
@@ -597,6 +603,7 @@ async fn run_preset(loader: Loader) {
             eula_accepted: true,
             pirate_mode: false,
             nick_protection: false,
+            ely_skins: false,
         })
         .await
         .unwrap()
@@ -677,6 +684,7 @@ async fn live_upgrade() {
         eula_accepted: true,
         pirate_mode: false,
         nick_protection: false,
+        ely_skins: false,
     };
 
     // Fabric: предыдущая версия игры с Lithium → последняя.
@@ -754,6 +762,7 @@ async fn run_forge_like(loader: Loader) {
             eula_accepted: true,
             pirate_mode: false,
             nick_protection: false,
+            ely_skins: false,
         })
         .await
         .unwrap()
@@ -813,6 +822,7 @@ async fn live_heap_monitoring() {
             eula_accepted: true,
             pirate_mode: false,
             nick_protection: false,
+            ely_skins: false,
         })
         .await
         .unwrap()
@@ -835,4 +845,207 @@ async fn live_heap_monitoring() {
     assert!(!history.is_empty());
     manager.stop(&id, STOP_TIMEOUT).await.unwrap();
     assert!(!manager.stats_history(&id).is_empty(), "история остаётся после остановки");
+}
+
+// ---- процесс-сторож ----
+
+/// Как в жизни: «Hearth» (этот же тестовый exe в отдельном процессе) запускает
+/// сервер, держит сторожа и падает. Сторож через RCON останавливает сервер, и
+/// тот успевает сохранить мир, хотя Job Object без сторожа убил бы его сразу.
+#[test]
+#[ignore]
+fn live_watchdog_saves_world_when_hearth_dies() {
+    let dir = tempfile::tempdir().unwrap();
+    let ready = dir.path().join("ready.txt");
+    let mut fake = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["live_watchdog_fake_hearth", "--exact", "--ignored", "--nocapture"])
+        .env("HEARTH_FAKE_HEARTH", &ready)
+        .spawn()
+        .unwrap();
+
+    let started = Instant::now();
+    while !ready.is_file() {
+        assert!(fake.try_wait().unwrap().is_none(), "«Hearth» завершился раньше времени");
+        assert!(started.elapsed() < Duration::from_secs(900), "сервер не запустился");
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    let text = std::fs::read_to_string(&ready).unwrap();
+    let mut lines = text.lines();
+    let game_dir = std::path::PathBuf::from(lines.next().unwrap());
+    let port: u16 = lines.next().unwrap().parse().unwrap();
+    let log = game_dir.join("logs").join("latest.log");
+    assert!(!std::fs::read_to_string(&log).unwrap_or_default().contains("Stopping server"));
+
+    println!("== «Hearth» падает");
+    fake.kill().unwrap();
+    fake.wait().unwrap();
+
+    let killed = Instant::now();
+    while std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+        assert!(killed.elapsed() < Duration::from_secs(240), "сервер не остановился после падения Hearth");
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    std::thread::sleep(Duration::from_secs(2));
+    let text = std::fs::read_to_string(&log).unwrap();
+    println!("== сервер остановлен за {:?}", killed.elapsed());
+    assert!(text.contains("Stopping server"), "сервер остановился командой stop, а не был убит:\n{text}");
+    assert!(text.contains("Saving worlds") || text.contains("Saving chunks"), "мир сохранён:\n{text}");
+}
+
+/// «Hearth» для теста выше: запускается только из него.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_watchdog_fake_hearth() {
+    let Ok(ready) = std::env::var("HEARTH_FAKE_HEARTH") else { return };
+    let shared = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("hearth-live");
+    let servers = std::path::Path::new(&ready).parent().unwrap().join("servers");
+    let paths = Paths::new(shared.join("config"), shared.join("data"));
+    let http = Http::new(paths.cache_dir()).unwrap();
+    let manager = test_manager(&paths, &http, &servers, Arc::new(PrintSink::default()));
+
+    let mut guard = std::process::Command::new(std::env::current_exe().unwrap());
+    guard
+        .args(["live_watchdog_guard", "--exact", "--ignored"])
+        .env("HEARTH_WATCHDOG_JOB", manager.job_name().expect("job создан"));
+    // HEARTH_NO_GUARD=1: проверка, что без сторожа тест действительно падает.
+    if std::env::var("HEARTH_NO_GUARD").is_err() {
+        manager.attach_watchdog(hearth_lib::watchdog::Watchdog::spawn(guard).unwrap());
+    }
+
+    let version = providers::list_versions(&http, Loader::Vanilla, false).await.unwrap()[0].id.clone();
+    let port = free_port();
+    let meta = manager
+        .create(CreateServerRequest {
+            name: "Сторож".into(),
+            loader: Loader::Vanilla,
+            game_version: version,
+            memory_mb: 2048,
+            port: Some(port),
+            game_mode: GameMode::Creative,
+            difficulty: Difficulty::Peaceful,
+            max_players: 2,
+            seed: Some("hearth".into()),
+            eula_accepted: true,
+            pirate_mode: false,
+            nick_protection: false,
+            ely_skins: false,
+        })
+        .await
+        .unwrap();
+    manager.start(&meta.id).await.unwrap();
+    wait_running(&manager, &meta.id).await;
+    let game_dir = manager.store().game_dir(&meta.id);
+    std::fs::write(&ready, format!("{}\n{port}\n", game_dir.display())).unwrap();
+    tokio::time::sleep(Duration::from_secs(900)).await;
+}
+
+/// Сторож для теста выше: запускается только из «Hearth».
+#[test]
+#[ignore]
+fn live_watchdog_guard() {
+    let Ok(job) = std::env::var("HEARTH_WATCHDOG_JOB") else { return };
+    hearth_lib::watchdog::serve(&job);
+}
+
+// ---- скины Ely.by ----
+
+/// Пиратский сервер со скинами Ely.by из мастера: плагин скинов ставится вместе
+/// с сервером, загружается, и после запуска (когда плагин допишет свои
+/// настройки) Ely.by в них по-прежнему включён. Потом переключатель убирает
+/// и возвращает плагин.
+async fn run_skins(loader: Loader, marker: &str) {
+    let shared = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("hearth-live");
+    let servers = tempfile::tempdir().unwrap();
+    let paths = Paths::new(shared.join("config"), shared.join("data"));
+    let http = Http::new(paths.cache_dir()).unwrap();
+    let sink = Arc::new(PrintSink::default());
+    let manager = test_manager(&paths, &http, servers.path(), sink.clone());
+
+    let version = providers::list_versions(&http, loader, false).await.unwrap()[0].id.clone();
+    println!("== {loader:?} {version}");
+    let meta = manager
+        .create(CreateServerRequest {
+            name: format!("Скины {loader:?}"),
+            loader,
+            game_version: version,
+            memory_mb: 3072,
+            port: Some(free_port()),
+            game_mode: GameMode::Creative,
+            difficulty: Difficulty::Peaceful,
+            max_players: 2,
+            seed: Some("hearth".into()),
+            eula_accepted: true,
+            pirate_mode: true,
+            nick_protection: false,
+            ely_skins: true,
+        })
+        .await
+        .unwrap();
+    let id = meta.id.clone();
+    assert!(meta.ely_skins);
+
+    manager.start(&id).await.unwrap();
+    wait_running(&manager, &id).await;
+    let meta = manager.store().load(&id).unwrap();
+    let file = meta.skin_plugin.clone().expect("плагин скинов поставлен");
+    println!("== поставлен {file}");
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let console = manager.console(&id);
+    assert!(
+        console.iter().any(|l| l.text.contains(marker)),
+        "плагин скинов загрузился (ищу «{marker}» в консоли)"
+    );
+    manager.stop(&id, STOP_TIMEOUT).await.unwrap();
+
+    let game_dir = manager.store().game_dir(&id);
+    if loader.is_paper_like() {
+        let text = std::fs::read_to_string(game_dir.join("plugins/SkinsRestorer/config.yml")).unwrap();
+        assert!(text.contains("elyByEnabled: true"), "Ely.by включён после запуска:\n{text}");
+        assert!(text.lines().count() > 10, "плагин дописал остальные настройки сам");
+    } else {
+        let text = std::fs::read_to_string(game_dir.join("config/skinrestorer/config.json")).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["join"]["autoFetch"]["enabled"], true, "{text}");
+        assert_eq!(value["join"]["autoFetch"]["providers"][0], "ely.by", "{text}");
+        assert_eq!(value["language"], "ru_ru", "{text}");
+    }
+
+    // Переключатель в настройках: убрать и вернуть.
+    let off = manager.set_ely_skins(&id, false).await.unwrap();
+    assert!(!off.ely_skins && off.skin_plugin.is_none());
+    let mods = manager.mods(&id).await.unwrap();
+    assert!(!mods.items.iter().any(|m| m.file == file), "jar убран");
+    let on = manager.set_ely_skins(&id, true).await.unwrap();
+    assert!(on.ely_skins && on.skin_plugin.is_some());
+    let mods = manager.mods(&id).await.unwrap();
+    assert!(mods.items.iter().any(|m| m.ely_skins), "в списке модов помечен как скины Ely.by");
+
+    // Выключение пиратского режима убирает скины: с лицензией они настоящие.
+    let result = manager.set_pirate_mode(&id, false, false).await.unwrap();
+    assert!(!result.meta.ely_skins && result.meta.skin_plugin.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_skins_paper() {
+    run_skins(Loader::Paper, "SkinsRestorer").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_skins_fabric() {
+    run_skins(Loader::Fabric, "skinrestorer").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_skins_neoforge() {
+    run_skins(Loader::NeoForge, "skinrestorer").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn live_skins_forge() {
+    run_skins(Loader::Forge, "skinrestorer").await;
 }

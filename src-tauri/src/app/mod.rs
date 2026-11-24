@@ -43,7 +43,14 @@ impl EventSink for TauriSink {
 
 pub fn run() {
     let paths = Paths::from_system().expect("не удалось определить папки приложения");
-    let _log_guard = init_logging(&paths.logs_dir());
+    // Hearth.exe --watchdog <job>: процесс-сторож, окна и Tauri не нужны.
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some(crate::watchdog::ARG) {
+        let _log_guard = init_logging(&paths.logs_dir(), "watchdog");
+        crate::watchdog::serve(args.get(2).map(String::as_str).unwrap_or_default());
+        return;
+    }
+    let _log_guard = init_logging(&paths.logs_dir(), "hearth");
     tracing::info!("Hearth {} запускается", env!("CARGO_PKG_VERSION"));
 
     let app = tauri::Builder::default()
@@ -65,6 +72,12 @@ pub fn run() {
             let http = Http::new(paths.cache_dir())?;
             let sink = Arc::new(TauriSink(app.handle().clone()));
             let manager = ServerManager::new(&paths, http, config.servers_dir(&paths), sink);
+            if let Some(job) = manager.job_name() {
+                match crate::watchdog::Watchdog::self_command(&job).and_then(crate::watchdog::Watchdog::spawn) {
+                    Ok(watchdog) => manager.attach_watchdog(watchdog),
+                    Err(e) => tracing::warn!("Не удалось запустить процесс-сторож: {e}"),
+                }
+            }
             sync_autostart(app.handle(), config.autostart);
             app.manage(AppState {
                 manager: manager.clone(),
@@ -167,14 +180,14 @@ pub(crate) fn request_quit(app: &AppHandle) {
     });
 }
 
-fn init_logging(dir: &Path) -> Option<tracing_appender::non_blocking::WorkerGuard> {
+fn init_logging(dir: &Path, prefix: &str) -> Option<tracing_appender::non_blocking::WorkerGuard> {
     use tracing_subscriber::fmt::writer::MakeWriterExt;
     use tracing_subscriber::EnvFilter;
 
     std::fs::create_dir_all(dir).ok()?;
     let appender = tracing_appender::rolling::Builder::new()
         .rotation(tracing_appender::rolling::Rotation::DAILY)
-        .filename_prefix("hearth")
+        .filename_prefix(prefix)
         .filename_suffix("log")
         .max_log_files(7)
         .build(dir)

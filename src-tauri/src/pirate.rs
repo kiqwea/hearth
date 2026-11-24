@@ -176,39 +176,52 @@ pub fn auth_plugin_for(loader: Loader) -> Option<AuthPlugin> {
 /// Ставит плагин авторизации и его обязательные зависимости (например, Fabric API).
 /// Возвращает имя файла самого плагина (чтобы потом его можно было убрать).
 pub async fn install_auth(http: &Http, plugin: &AuthPlugin, game_dir: &Path, game_version: &str) -> Result<String> {
-    // Сначала сборка именно под это ядро (у AuthMe есть отдельная для Paper), потом совместимые.
-    let mut found = None;
-    for loaders in [&plugin.loaders[..1], plugin.loaders] {
-        found = modrinth::latest_file(http, plugin.project, loaders, game_version).await?;
-        if found.is_some() {
-            break;
-        }
-    }
-    let file = found
+    install_project(http, plugin.title, plugin.project, plugin.loaders, &game_dir.join(plugin.folder), game_version)
+        .await?
         .ok_or_else(|| {
             Error::AuthUnavailable(format!(
                 "{} пока не поддерживает Minecraft {game_version}",
                 plugin.title
             ))
-        })?;
-    let folder = game_dir.join(plugin.folder);
-    tokio::fs::create_dir_all(&folder).await?;
+        })
+}
+
+/// Ставит служебный плагин или мод с Modrinth (защита ников, скины) и его
+/// обязательные зависимости в `folder`. `None`: под эту версию игры его нет.
+pub(crate) async fn install_project(
+    http: &Http,
+    title: &str,
+    project: &str,
+    loaders: &[&str],
+    folder: &Path,
+    game_version: &str,
+) -> Result<Option<String>> {
+    // Сначала сборка именно под это ядро (у AuthMe есть отдельная для Paper), потом совместимые.
+    let mut found = None;
+    for loaders in [&loaders[..1], loaders] {
+        found = modrinth::latest_file(http, project, loaders, game_version).await?;
+        if found.is_some() {
+            break;
+        }
+    }
+    let Some(file) = found else { return Ok(None) };
+    tokio::fs::create_dir_all(folder).await?;
     for dep in &file.required {
-        if dep_present(&folder, dep) {
+        if dep_present(folder, dep) {
             continue;
         }
-        match modrinth::latest_file(http, dep, plugin.loaders, game_version).await? {
+        match modrinth::latest_file(http, dep, loaders, game_version).await? {
             Some(dep_file) => {
                 http.download(&dep_file.url, &folder.join(&dep_file.filename), dep_file.checksum.as_ref(), |_, _| {})
                     .await?;
             }
-            None => tracing::warn!("Зависимость {dep} для {} не найдена под {game_version}", plugin.title),
+            None => tracing::warn!("Зависимость {dep} для {title} не найдена под {game_version}"),
         }
     }
-    remove_old_copies(&folder, plugin.project, &file.filename);
+    remove_old_copies(folder, project, &file.filename);
     http.download(&file.url, &folder.join(&file.filename), file.checksum.as_ref(), |_, _| {})
         .await?;
-    Ok(file.filename)
+    Ok(Some(file.filename))
 }
 
 /// Fabric API (P7dR8mSH) часто уже стоит: не качаем второй раз.
@@ -235,6 +248,9 @@ fn remove_old_copies(folder: &Path, project: &str, keep: &str) {
     let prefix = match project {
         "authmereloaded" => "authme-",
         "easyauth" => "easyauth-",
+        // SkinsRestorer (Paper) и SkinRestorer (Fabric/Forge/NeoForge) — разные проекты.
+        "skinsrestorer" => "skinsrestorer",
+        "skinrestorer" => "skinrestorer-",
         _ => return,
     };
     for name in jar_names(folder) {

@@ -57,6 +57,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         try_direct_access,
         set_pirate_mode,
         set_nick_protection,
+        set_ely_skins,
         get_players,
         player_action,
         stats_history,
@@ -201,6 +202,16 @@ async fn set_nick_protection(state: State<'_, AppState>, id: String, on: bool) -
         .set_nick_protection(&id, on)
         .await
         .inspect_err(|e| tracing::warn!("Защита ников сервера {id}: {e}"))
+}
+
+/// Скины Ely.by (SkinsRestorer/SkinRestorer) на сервере в пиратском режиме.
+#[tauri::command]
+async fn set_ely_skins(state: State<'_, AppState>, id: String, on: bool) -> Result<ServerMeta> {
+    state
+        .manager
+        .set_ely_skins(&id, on)
+        .await
+        .inspect_err(|e| tracing::warn!("Скины Ely.by сервера {id}: {e}"))
 }
 
 /// Сначала пробуем без посредников: проброс порта на роутере.

@@ -15,4 +15,8 @@ pirateMode: boolean,
 /**
  * В пиратском режиме: защитить ники паролем (AuthMe/EasyAuth).
  */
-nickProtection: boolean, };
+nickProtection: boolean, 
+/**
+ * В пиратском режиме: скины игроков с Ely.by (SkinsRestorer/SkinRestorer).
+ */
+elySkins: boolean, };

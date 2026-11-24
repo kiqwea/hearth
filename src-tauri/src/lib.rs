@@ -22,9 +22,11 @@ pub mod process;
 pub mod providers;
 pub mod rcon;
 pub mod servers;
+pub mod skins;
 pub mod system;
 pub mod tunnel;
 pub mod upgrade;
+pub mod watchdog;
 
 mod app;
 

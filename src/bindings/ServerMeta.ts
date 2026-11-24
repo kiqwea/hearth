@@ -43,6 +43,15 @@ authLangSet: boolean,
  */
 nickProtection: boolean, 
 /**
+ * Файл плагина или мода скинов Ely.by, который поставил Hearth. `null` — не стоит.
+ */
+skinPlugin: string | null, 
+/**
+ * Пользователь хочет скины Ely.by. Если плагин ещё не стоит, Hearth
+ * поставит его при установке сервера.
+ */
+elySkins: boolean, 
+/**
  * Резервные копии мира по расписанию.
  */
 autoBackup: AutoBackup, 

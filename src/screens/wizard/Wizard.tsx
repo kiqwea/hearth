@@ -8,7 +8,7 @@ import type { Loader } from "../../bindings/Loader";
 import { Button, Card, Field, inputClass, ProgressBar, Segmented, Spinner, Switch } from "../../components/ui";
 import { t } from "../../i18n";
 import { api, errorMessage, openExternal } from "../../lib/api";
-import { authPluginName, formatMb, gb, loaderName } from "../../lib/format";
+import { authPluginName, formatMb, gb, loaderName, skinPluginName } from "../../lib/format";
 import { useHearth } from "../../lib/store";
 
 interface FormState {
@@ -26,6 +26,8 @@ interface FormState {
   pirateMode: boolean;
   /** Защита ников паролем в пиратском режиме. */
   nickProtection: boolean;
+  /** Скины Ely.by в пиратском режиме. */
+  elySkins: boolean;
 }
 
 const LOADERS: Loader[] = ["paper", "vanilla", "fabric", "purpur", "neoforge", "forge"];
@@ -46,6 +48,7 @@ export function Wizard() {
     port: 25565,
     pirateMode: false,
     nickProtection: true,
+    elySkins: true,
   }));
   const [createdId, setCreatedId] = useState<string | null>(null);
 
@@ -334,6 +337,14 @@ function FormStep({
               warn={!form.nickProtection}
             />
           ))}
+        {form.pirateMode && skinPluginName(form.loader) && (
+          <ToggleRow
+            label={t.skins.label}
+            hint={form.elySkins ? t.skins.onHint : t.skins.offHint}
+            checked={form.elySkins}
+            onChange={(v) => update("elySkins", v)}
+          />
+        )}
       </section>
 
       <details className="bg-card border border-line rounded-xl p-3.5 px-4">
@@ -434,6 +445,7 @@ function InstallStep({
           eulaAccepted: true,
           pirateMode: form.pirateMode,
           nickProtection: form.pirateMode && form.nickProtection && authPluginName(form.loader) !== null,
+          elySkins: form.pirateMode && form.elySkins && skinPluginName(form.loader) !== null,
         });
         id = meta.id;
         setCreatedId(id);

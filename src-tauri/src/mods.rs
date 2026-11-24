@@ -66,6 +66,8 @@ pub struct InstalledMod {
     pub update: Option<String>,
     /// Защита ников, которую поставил Hearth: убирается в настройках сервера, а не здесь.
     pub nick_protection: bool,
+    /// Скины Ely.by, которые поставил Hearth: тоже убираются в настройках сервера.
+    pub ely_skins: bool,
     #[ts(type = "number")]
     pub size_bytes: u64,
 }
@@ -220,6 +222,7 @@ pub async fn list(http: &Http, loader: Loader, game_version: &str, game_dir: &Pa
                     .unwrap_or(if loader.is_paper_like() { ClientSide::ServerOnly } else { ClientSide::Unknown }),
                 update,
                 nick_protection: false,
+                ely_skins: false,
                 size_bytes,
                 file,
             }

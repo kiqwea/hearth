@@ -20,4 +20,8 @@ update: string | null,
 /**
  * Защита ников, которую поставил Hearth: убирается в настройках сервера, а не здесь.
  */
-nickProtection: boolean, sizeBytes: number, };
+nickProtection: boolean, 
+/**
+ * Скины Ely.by, которые поставил Hearth: тоже убираются в настройках сервера.
+ */
+elySkins: boolean, sizeBytes: number, };

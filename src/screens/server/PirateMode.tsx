@@ -4,6 +4,7 @@
 // EasyAuth для Fabric) по желанию, перенос вещей игроков на новые UUID,
 // server.properties. Защиту ников можно включать и выключать отдельно:
 // своей маленькой компании пароли при входе могут только мешать.
+// «Скины Ely.by» (SkinsRestorer/SkinRestorer) тоже включаются отдельно.
 
 import { useState } from "react";
 import { TriangleExclamationPoint } from "lucide-react";
@@ -12,7 +13,7 @@ import type { ServerSummary } from "../../bindings/ServerSummary";
 import { Button, Dialog, Spinner, Switch } from "../../components/ui";
 import { t } from "../../i18n";
 import { api, isHearthError } from "../../lib/api";
-import { authPluginName, isActive, loaderName } from "../../lib/format";
+import { authPluginName, isActive, loaderName, skinPluginName } from "../../lib/format";
 import { useHearth } from "../../lib/store";
 
 type Ask = { kind: "enable" } | { kind: "disable" } | { kind: "noAuth"; reason: string };
@@ -24,10 +25,12 @@ export function PirateMode({ server, onChanged }: { server: ServerSummary; onCha
   const refreshServers = useHearth((s) => s.refreshServers);
   const [ask, setAsk] = useState<Ask | null>(null);
   const [protect, setProtect] = useState(true);
-  const [working, setWorking] = useState<"pirate" | "protection" | null>(null);
+  const [working, setWorking] = useState<"pirate" | "protection" | "skins" | null>(null);
 
   const active = isActive(status);
   const plugin = authPluginName(meta.loader);
+  const skinPlugin = skinPluginName(meta.loader);
+  const skinsNow = !!meta.skinPlugin;
   const loaderTitle = loaderName(meta.loader);
   const protectedNow = !!meta.authPlugin;
 
@@ -56,6 +59,19 @@ export function PirateMode({ server, onChanged }: { server: ServerSummary; onCha
       await api.setNickProtection(meta.id, on);
       await refreshServers();
       toast("success", on ? t.protection.enabled : t.protection.disabled);
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  async function applySkins(on: boolean) {
+    setWorking("skins");
+    try {
+      await api.setElySkins(meta.id, on);
+      await refreshServers();
+      toast("success", on ? t.skins.enabled : t.skins.disabled);
     } catch (e) {
       toastError(e);
     } finally {
@@ -118,6 +134,24 @@ export function PirateMode({ server, onChanged }: { server: ServerSummary; onCha
             <span />
           </Row>
         ))}
+
+      {meta.pirateMode && skinPlugin && (
+        <Row
+          label={t.skins.label}
+          hint={working === "skins" ? t.skins.working : active ? t.pirate.stopFirst : skinsNow ? t.skins.onHint : t.skins.offHint}
+        >
+          {working === "skins" ? (
+            <Spinner className="!w-6 !h-6" />
+          ) : (
+            <Switch
+              checked={skinsNow}
+              disabled={active || working !== null}
+              label={t.skins.label}
+              onChange={(on) => void applySkins(on)}
+            />
+          )}
+        </Row>
+      )}
 
       <Dialog
         open={ask?.kind === "enable"}

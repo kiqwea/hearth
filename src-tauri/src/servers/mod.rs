@@ -122,6 +122,13 @@ pub struct ServerMeta {
     /// (`auth_plugin` пуст), Hearth поставит его при установке сервера.
     #[serde(default)]
     pub nick_protection: bool,
+    /// Файл плагина или мода скинов Ely.by, который поставил Hearth. `null` — не стоит.
+    #[serde(default)]
+    pub skin_plugin: Option<String>,
+    /// Пользователь хочет скины Ely.by. Если плагин ещё не стоит, Hearth
+    /// поставит его при установке сервера.
+    #[serde(default)]
+    pub ely_skins: bool,
     /// Резервные копии мира по расписанию.
     #[serde(default)]
     pub auto_backup: AutoBackup,
@@ -202,6 +209,9 @@ pub struct CreateServerRequest {
     /// В пиратском режиме: защитить ники паролем (AuthMe/EasyAuth).
     #[serde(default)]
     pub nick_protection: bool,
+    /// В пиратском режиме: скины игроков с Ely.by (SkinsRestorer/SkinRestorer).
+    #[serde(default)]
+    pub ely_skins: bool,
 }
 
 /// Изменение метаданных из настроек сервера. `None` = не менять.
@@ -410,6 +420,8 @@ impl ServerStore {
             auth_lang_set: false,
             // Для Vanilla, NeoForge и Forge Hearth защиту ников не ставит.
             nick_protection: req.pirate_mode && req.nick_protection && crate::pirate::auth_plugin_for(req.loader).is_some(),
+            skin_plugin: None,
+            ely_skins: req.pirate_mode && req.ely_skins && crate::skins::skin_plugin_for(req.loader).is_some(),
             auto_backup: AutoBackup::default(),
             auto_stop_minutes: 0,
             start_with_app: false,
@@ -496,6 +508,7 @@ mod tests {
             eula_accepted: true,
             pirate_mode: false,
             nick_protection: false,
+            ely_skins: false,
         }
     }
 

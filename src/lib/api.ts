@@ -96,6 +96,7 @@ export interface HearthApi {
   setPirateMode(id: string, enable: boolean, protect: boolean): Promise<PirateResult>;
   /** Защита ников паролем (AuthMe/EasyAuth) на сервере в пиратском режиме. */
   setNickProtection(id: string, on: boolean): Promise<ServerMeta>;
+  setElySkins(id: string, on: boolean): Promise<ServerMeta>;
 
   // Игроки
   getPlayers(id: string): Promise<PlayerInfo[]>;
@@ -227,6 +228,7 @@ const tauriApi: HearthApi = {
   tryDirectAccess: (id) => invoke("try_direct_access", { id }),
   setPirateMode: (id, enable, protect) => invoke("set_pirate_mode", { id, enable, protect }),
   setNickProtection: (id, on) => invoke("set_nick_protection", { id, on }),
+  setElySkins: (id, on) => invoke("set_ely_skins", { id, on }),
   getPlayers: (id) => invoke("get_players", { id }),
   statsHistory: (id) => invoke("stats_history", { id }),
   playerAction: (id, action, name, reason) => invoke("player_action", { id, action, name, reason }),

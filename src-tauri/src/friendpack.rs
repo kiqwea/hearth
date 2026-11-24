@@ -134,8 +134,8 @@ async fn collect(http: &Http, meta: &ServerMeta, game_dir: &Path, opts: PackOpti
                 false
             }
         };
-        // Защита ников (EasyAuth) работает только на сервере.
-        if !wanted || item.nick_protection {
+        // Защита ников (EasyAuth) и скины Ely.by работают только на сервере.
+        if !wanted || item.nick_protection || item.ely_skins {
             continue;
         }
         let Some(version) = item.project_id.as_ref().and_then(|p| by_project.get(p)) else { continue };

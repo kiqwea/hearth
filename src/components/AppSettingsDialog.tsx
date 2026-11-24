@@ -131,6 +131,9 @@ export function AppSettingsDialog() {
           </Button>
         </div>
         <span>{t.appSettings.disclaimer}</span>
+        <span className="pt-2 text-center text-[12px] tracking-wide text-muted/80">
+          powered by <span className="font-semibold text-soft">kiqwea_</span>
+        </span>
       </div>
     </Dialog>
   );

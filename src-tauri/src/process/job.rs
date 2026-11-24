@@ -3,21 +3,30 @@
 //!
 //! Обычный выход из Hearth сначала останавливает серверы командой `stop`;
 //! Job Object срабатывает только как страховка.
+//!
+//! У job есть имя: процесс-сторож (`crate::watchdog`) открывает его и держит свой
+//! дескриптор. Если Hearth упадёт, job живёт, пока сторож сохраняет миры, и
+//! закрывается (завершая всё, что осталось) только вместе со сторожем.
 
 #[cfg(windows)]
 mod imp {
     use std::ffi::c_void;
     use std::os::windows::io::RawHandle;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
-    use windows::core::PCWSTR;
+    use windows::core::HSTRING;
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, OpenJobObjectW,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
+    /// Право JOB_OBJECT_QUERY: сторожу достаточно просто держать job открытым.
+    const JOB_OBJECT_QUERY: u32 = 0x0004;
 
-    pub struct Job(HANDLE);
+    pub struct Job {
+        handle: HANDLE,
+        name: String,
+    }
 
     // Дескриптор Job Object можно использовать из любого потока.
     unsafe impl Send for Job {}
@@ -25,13 +34,19 @@ mod imp {
 
     impl Job {
         pub fn new() -> std::io::Result<Self> {
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+            let name = format!(
+                "Local\\Hearth-servers-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            );
             unsafe {
-                let handle = CreateJobObjectW(None, PCWSTR::null()).map_err(to_io)?;
-                let job = Job(handle);
+                let handle = CreateJobObjectW(None, &HSTRING::from(name.as_str())).map_err(to_io)?;
+                let job = Job { handle, name };
                 let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
                 info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
                 SetInformationJobObject(
-                    job.0,
+                    job.handle,
                     JobObjectExtendedLimitInformation,
                     &info as *const _ as *const c_void,
                     std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
@@ -41,15 +56,28 @@ mod imp {
             }
         }
 
+        /// Открывает существующий job по имени (так делает сторож). Пока этот
+        /// дескриптор открыт, процессы job не завершатся из-за падения Hearth.
+        pub fn open(name: &str) -> std::io::Result<Self> {
+            unsafe {
+                let handle = OpenJobObjectW(JOB_OBJECT_QUERY, false, &HSTRING::from(name)).map_err(to_io)?;
+                Ok(Job { handle, name: name.to_string() })
+            }
+        }
+
+        pub fn name(&self) -> &str {
+            &self.name
+        }
+
         pub fn assign(&self, process: RawHandle) -> std::io::Result<()> {
-            unsafe { AssignProcessToJobObject(self.0, HANDLE(process)).map_err(to_io) }
+            unsafe { AssignProcessToJobObject(self.handle, HANDLE(process)).map_err(to_io) }
         }
     }
 
     impl Drop for Job {
         fn drop(&mut self) {
             unsafe {
-                let _ = CloseHandle(self.0);
+                let _ = CloseHandle(self.handle);
             }
         }
     }
@@ -68,6 +96,14 @@ mod imp {
     impl Job {
         pub fn new() -> std::io::Result<Self> {
             Ok(Job)
+        }
+
+        pub fn open(_name: &str) -> std::io::Result<Self> {
+            Ok(Job)
+        }
+
+        pub fn name(&self) -> &str {
+            ""
         }
     }
 }

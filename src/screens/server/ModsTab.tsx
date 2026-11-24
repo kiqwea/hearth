@@ -149,6 +149,7 @@ export function ModsTab({ server }: { server: ServerSummary }) {
                     <span>{formatSize(m.sizeBytes)}</span>
                     {!plugins && <SideBadge side={m.clientSide} />}
                     {m.nickProtection && <Badge tone="bg-accent-soft text-accent-text">{t.mods.nickProtection}</Badge>}
+                    {m.elySkins && <Badge tone="bg-accent-soft text-accent-text">{t.mods.elySkins}</Badge>}
                     {m.update && <Badge tone="bg-ok-bg text-ok-text">{t.mods.updateTo(m.update)}</Badge>}
                   </span>
                 </span>
@@ -160,9 +161,9 @@ export function ModsTab({ server }: { server: ServerSummary }) {
                     </Button>
                   )}
                   <IconButton
-                    label={m.nickProtection ? t.mods.nickProtectionHint : t.mods.remove}
+                    label={m.nickProtection || m.elySkins ? t.mods.nickProtectionHint : t.mods.remove}
                     className="!w-9 !h-9 hover:!text-err"
-                    disabled={active || busy !== null || m.nickProtection}
+                    disabled={active || busy !== null || m.nickProtection || m.elySkins}
                     onClick={() => setRemoveAsk(m)}
                   >
                     <Trash size={16} aria-hidden="true" />

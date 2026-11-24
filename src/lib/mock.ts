@@ -63,6 +63,8 @@ function meta(partial: Partial<ServerMeta> & Pick<ServerMeta, "id" | "name" | "l
     authPlugin: null,
     authLangSet: false,
     nickProtection: false,
+    skinPlugin: null,
+    elySkins: false,
     autoBackup: { enabled: true, everyMinutes: 60, keep: 10 },
     autoStopMinutes: 0,
     startWithApp: false,
@@ -126,7 +128,7 @@ export function createMockApi(): HearthApi {
   const mods = new Map<string, InstalledMod[]>();
   const modsOf = (id: string) => {
     if (!mods.has(id)) {
-      const base = { description: "", iconUrl: null, nickProtection: false, sizeBytes: 900_000 };
+      const base = { description: "", iconUrl: null, nickProtection: false, elySkins: false, sizeBytes: 900_000 };
       mods.set(
         id,
         id.startsWith("modded")
@@ -337,6 +339,8 @@ export function createMockApi(): HearthApi {
           pirateMode: req.pirateMode,
           nickProtection: req.nickProtection,
           authPlugin: req.nickProtection ? "AuthMe.jar" : null,
+          elySkins: req.elySkins,
+          skinPlugin: req.elySkins ? "SkinsRestorer.jar" : null,
         }),
         { state: "stopped" },
       );
@@ -503,6 +507,8 @@ export function createMockApi(): HearthApi {
       s.meta.pirateMode = enable;
       s.meta.authPlugin = enable && plugin && protect ? `${plugin.split(" ")[0]}.jar` : null;
       s.meta.nickProtection = !!s.meta.authPlugin;
+      s.meta.skinPlugin = enable && s.meta.loader !== "vanilla" ? "SkinsRestorer.jar" : null;
+      s.meta.elySkins = !!s.meta.skinPlugin;
       s.props["online-mode"] = String(!enable);
       return {
         meta: { ...s.meta },
@@ -516,6 +522,13 @@ export function createMockApi(): HearthApi {
       await wait(1000);
       s.meta.authPlugin = on ? "AuthMe.jar" : null;
       s.meta.nickProtection = on;
+      return { ...s.meta };
+    },
+    setElySkins: async (id, on) => {
+      const s = servers.get(id)!;
+      await wait(1000);
+      s.meta.skinPlugin = on ? "SkinsRestorer.jar" : null;
+      s.meta.elySkins = on;
       return { ...s.meta };
     },
     tryDirectAccess: async (id) => {
@@ -614,6 +627,7 @@ export function createMockApi(): HearthApi {
         clientSide: hit.clientSide,
         update: null,
         nickProtection: false,
+        elySkins: false,
         sizeBytes: 1_200_000,
       });
       return [file];

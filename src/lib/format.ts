@@ -123,6 +123,13 @@ export function isModded(loader: Loader): boolean {
   return loader === "fabric" || loader === "neoforge" || loader === "forge";
 }
 
+/** Плагин скинов Ely.by, который ставит Hearth, или `null` (для Vanilla нет). */
+export function skinPluginName(loader: Loader): string | null {
+  if (isPaperLike(loader)) return "SkinsRestorer";
+  if (isModded(loader)) return "SkinRestorer";
+  return null;
+}
+
 /** Плагин защиты ников, который умеет ставить Hearth, или `null`. */
 export function authPluginName(loader: Loader): string | null {
   if (isPaperLike(loader)) return "AuthMe Reloaded";

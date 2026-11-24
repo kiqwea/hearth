@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+
+use crate::watchdog::{Guarded, Watchdog};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -38,6 +40,7 @@ use crate::direct::{DirectInfo, DirectManager, DirectState};
 use crate::friendpack::{self, PackFormat, PackOptions, PackSummary};
 use crate::mods::{self, ModList, ModSearch};
 use crate::pirate;
+use crate::skins;
 use crate::presets::{self, PregenStatus, PresetResult};
 use crate::upgrade::{ModCompat, ModCompatStatus, UpdateInfo, UpdatePlan, UpdateResult};
 use crate::players::{self, PlayerAction, PlayerInfo, ServerStats, StatsEvent, StatsSample};
@@ -172,6 +175,8 @@ pub struct ServerManager {
     minute_ms: AtomicU64,
     /// Установка и удаление плагинов идут по очереди.
     mod_ops: tokio::sync::Mutex<()>,
+    /// Процесс-сторож: сохранит миры, если Hearth упадёт (см. `crate::watchdog`).
+    watchdog: std::sync::OnceLock<Watchdog>,
 }
 
 /// Снимает отметку «занят», когда операция закончилась (в том числе с ошибкой).
@@ -264,7 +269,39 @@ impl ServerManager {
             access_ops: tokio::sync::Mutex::new(()),
             minute_ms: AtomicU64::new(60_000),
             mod_ops: tokio::sync::Mutex::new(()),
+            watchdog: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Имя Job Object серверов: его открывает процесс-сторож.
+    pub fn job_name(&self) -> Option<String> {
+        self.job.as_ref().map(|j| j.name().to_string())
+    }
+
+    /// Подключает процесс-сторож и сразу сообщает ему, какие серверы работают.
+    pub fn attach_watchdog(&self, watchdog: Watchdog) {
+        if self.watchdog.set(watchdog).is_ok() {
+            self.report_to_watchdog();
+        }
+    }
+
+    /// Отправляет сторожу актуальный список работающих серверов.
+    fn report_to_watchdog(&self) {
+        let Some(watchdog) = self.watchdog.get() else { return };
+        let list: Vec<Guarded> = self
+            .lock()
+            .running
+            .iter()
+            .filter_map(|(id, r)| {
+                Some(Guarded {
+                    id: id.clone(),
+                    pid: r.pid?,
+                    rcon_port: r.rcon_port,
+                    rcon_password: r.rcon_password.clone(),
+                })
+            })
+            .collect();
+        watchdog.update(&list);
     }
 
     /// Для живых тестов: сколько длится «минута» автовыключения.
@@ -623,6 +660,7 @@ impl ServerManager {
         let mut list = mods::list(&self.http, meta.loader, &meta.game_version, &store.game_dir(id)).await?;
         for item in &mut list.items {
             item.nick_protection = meta.auth_plugin.as_deref() == Some(item.file.as_str());
+            item.ely_skins = meta.skin_plugin.as_deref() == Some(item.file.as_str());
         }
         Ok(list)
     }
@@ -824,6 +862,12 @@ impl ServerManager {
                 store.save(&meta).await?;
                 notes.push("Защита ников выключена: её мод ещё не вышел под новую версию".into());
             }
+            if meta.skin_plugin.as_ref().is_some_and(|f| disabled.contains(f)) {
+                meta.skin_plugin = None;
+                meta.ely_skins = false;
+                store.save(&meta).await?;
+                notes.push("Скины Ely.by выключены: их мод ещё не вышел под новую версию".into());
+            }
         }
         tracing::info!(
             "Сервер {id}: обновлён {} {} → {} (сборка {:?}), моды: {updated:?}, убраны: {disabled:?}",
@@ -839,11 +883,23 @@ impl ServerManager {
     /// запоминаем новое имя.
     async fn follow_auth_plugin(&self, store: &ServerStore, id: &str, files: &[mods::InstalledFile]) -> Result<()> {
         let mut meta = store.load(id)?;
-        let Some(current) = meta.auth_plugin.clone() else { return Ok(()) };
-        if let Some(new) = files.iter().find(|f| f.replaced.as_deref() == Some(current.as_str())) {
-            meta.auth_plugin = Some(new.file.clone());
-            store.save(&meta).await?;
+        let renamed = |current: &Option<String>| {
+            let current = current.as_deref()?;
+            files.iter().find(|f| f.replaced.as_deref() == Some(current)).map(|f| f.file.clone())
+        };
+        let auth = renamed(&meta.auth_plugin);
+        let skin = renamed(&meta.skin_plugin);
+        if auth.is_none() && skin.is_none() {
+            return Ok(());
         }
+        // Плагин скинов тоже помним по имени файла.
+        if auth.is_some() {
+            meta.auth_plugin = auth;
+        }
+        if skin.is_some() {
+            meta.skin_plugin = skin;
+        }
+        store.save(&meta).await?;
         Ok(())
     }
 
@@ -868,6 +924,9 @@ impl ServerManager {
         let meta = store.load(id)?;
         if meta.auth_plugin.as_deref() == Some(file) {
             return Err(Error::invalid("Это защита ников: выключить её можно в настройках сервера, раздел «Доступ»"));
+        }
+        if meta.skin_plugin.as_deref() == Some(file) {
+            return Err(Error::invalid("Это скины Ely.by: выключить их можно в настройках сервера, раздел «Доступ»"));
         }
         let path = mods::mod_path(&store.game_dir(id), meta.loader, file)?;
         tokio::fs::remove_file(path).await?;
@@ -1089,8 +1148,19 @@ impl ServerManager {
                 auth = Some(plugin.title.to_string());
             }
             meta.nick_protection = meta.auth_plugin.is_some();
+            // Скины Ely.by: без них все игроки без лицензии бегают «Стивами».
+            // Не вышли под эту версию — режим всё равно включается.
+            if meta.skin_plugin.is_none() && skins::skin_plugin_for(meta.loader).is_some() {
+                match skins::install(&self.http, meta.loader, &game_dir, &meta.game_version).await {
+                    Ok(file) => meta.skin_plugin = Some(file),
+                    Err(e) => tracing::warn!("Сервер {id}: скины Ely.by не поставлены: {e}"),
+                }
+            }
+            meta.ely_skins = meta.skin_plugin.is_some();
         } else {
             remove_auth_plugin(&mut meta, &game_dir).await;
+            // С лицензией скины и так настоящие: плагин скинов только мешал бы.
+            remove_skin_plugin(&mut meta, &game_dir).await;
         }
 
         // Вещи, достижения и права игроков: на новые UUID.
@@ -1165,6 +1235,31 @@ impl ServerManager {
         }
         meta.nick_protection = on;
         store.save(&meta).await?;
+        Ok(meta)
+    }
+
+    /// Включает или убирает скины Ely.by на сервере в пиратском режиме.
+    /// Сервер должен быть остановлен.
+    pub async fn set_ely_skins(&self, id: &str, on: bool) -> Result<ServerMeta> {
+        let _guard = self.begin_busy(id)?;
+        let store = self.store();
+        let mut meta = store.load(id)?;
+        if !meta.pirate_mode {
+            return Err(Error::invalid("Скины Ely.by нужны только при входе с пиратских клиентов"));
+        }
+        let game_dir = store.game_dir(id);
+        if on {
+            if meta.skin_plugin.is_none() {
+                meta.skin_plugin = Some(skins::install(&self.http, meta.loader, &game_dir, &meta.game_version).await?);
+            } else {
+                skins::configure(&game_dir, meta.loader)?;
+            }
+        } else {
+            remove_skin_plugin(&mut meta, &game_dir).await;
+        }
+        meta.ely_skins = on;
+        store.save(&meta).await?;
+        tracing::info!("Сервер {id}: скины Ely.by {}", if on { "включены" } else { "выключены" });
         Ok(meta)
     }
 
@@ -1441,6 +1536,25 @@ impl ServerManager {
             }
         }
 
+        // Скины Ely.by выбраны в мастере: ставим вместе с сервером. Не вышли под
+        // эту версию игры — сервер всё равно запустится, с объяснением в консоли.
+        if meta.pirate_mode && meta.ely_skins && meta.skin_plugin.is_none() {
+            if let Some(plugin) = skins::skin_plugin_for(meta.loader) {
+                self.emit_install(id, InstallProgress::step(InstallStage::Server, format!("Ставлю скины Ely.by ({})", plugin.title)));
+                match skins::install(&self.http, meta.loader, &game_dir, &meta.game_version).await {
+                    Ok(file) => meta.skin_plugin = Some(file),
+                    Err(e) => {
+                        meta.ely_skins = false;
+                        self.push_line(
+                            id,
+                            ConsoleStream::System,
+                            format!("Скины Ely.by не поставлены: {e}. Включить их можно позже в настройках сервера."),
+                        );
+                    }
+                }
+            }
+        }
+
         // NeoForge и Forge: скачан установщик, запускаем его. Он сам качает
         // Minecraft и библиотеки и создаёт файл аргументов запуска.
         let launch = match &artifact.installer_args {
@@ -1567,6 +1681,12 @@ impl ServerManager {
             meta.auth_lang_set = true;
             store.save(&meta).await?;
         }
+        // Плагин скинов мог пересоздать свои настройки: Ely.by должен оставаться включён.
+        if meta.skin_plugin.is_some() {
+            if let Err(e) = skins::configure(&game_dir, meta.loader) {
+                tracing::warn!("Сервер {id}: не удалось настроить скины Ely.by: {e}");
+            }
+        }
         let required = meta
             .java_major
             .unwrap_or_else(|| java::fallback_major(&meta.game_version));
@@ -1635,6 +1755,7 @@ impl ServerManager {
             auto_stop_minutes: AtomicU32::new(meta.auto_stop_minutes),
         });
         self.lock().running.insert(id.to_string(), running.clone());
+        self.report_to_watchdog();
         self.spawn_stats(id, running.clone());
 
         let out_task = self.spawn_reader(id, stdout, ConsoleStream::Stdout);
@@ -1671,6 +1792,7 @@ impl ServerManager {
                 inner.running.remove(&id);
                 inner.stats.remove(&id);
             }
+            this.report_to_watchdog();
             let (status, message) = if requested || code == Some(0) {
                 (ServerStatus::Stopped, "Сервер остановлен".to_string())
             } else {
@@ -2038,6 +2160,14 @@ async fn remove_auth_plugin(meta: &mut ServerMeta, game_dir: &std::path::Path) {
         let _ = tokio::fs::remove_file(folder.join(file)).await;
     }
     meta.nick_protection = false;
+}
+
+/// Убирает jar плагина скинов. Его данные (выбранные скины) остаются.
+async fn remove_skin_plugin(meta: &mut ServerMeta, game_dir: &std::path::Path) {
+    if let (Some(file), Some(folder)) = (meta.skin_plugin.take(), skins::folder(game_dir, meta.loader)) {
+        let _ = tokio::fs::remove_file(folder.join(file)).await;
+    }
+    meta.ely_skins = false;
 }
 
 async fn write_line(running: &RunningServer, line: &str) -> std::io::Result<()> {
